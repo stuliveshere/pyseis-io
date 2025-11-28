@@ -1,0 +1,8 @@
+profile: smartsolo10
+extends: segd21
+
+overrides:
+  record_layout:
+    data_samples:
+      byte_order: little
+
