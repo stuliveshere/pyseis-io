@@ -141,8 +141,9 @@ This library was recently extracted from PySeis to establish a stable, reusable 
 
 ## License
 
-MIT License
+GNU Affero General Public License v3.0
 
 ## Related Projects
 
 - **PySeis**: Higher-level seismic data processing library that depends on pyseis-io
+
