@@ -1,6 +1,9 @@
-"""Core data models and structures for seismic data representation."""
+"""
+Core data models and structures for seismic data representation.
+"""
 
 from typing import Optional, Union, Tuple, List
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import dask.array as da
@@ -67,6 +70,10 @@ class ParquetHeaderStore:
     
     def __len__(self):
         return self.num_rows
+
+    def close(self):
+        """Release the ParquetFile resource."""
+        self.pq_file = None
 
 class SeismicData:
     """
@@ -179,3 +186,48 @@ class SeismicData:
         Trigger computation and return in-memory objects.
         """
         return self.data.compute(), self.headers
+
+    def close(self):
+        """
+        Release resources.
+        """
+        if self.header_store:
+            self.header_store.close()
+
+    @classmethod
+    def open(cls, path: Union[str, Path]) -> 'SeismicData':
+        """
+        Open a seismic dataset from disk.
+        
+        Args:
+            path: Path to the dataset.
+            
+        Returns:
+            SeismicData: The loaded dataset.
+        """
+        from .reader import InternalFormatReader
+        reader = InternalFormatReader(path)
+        return reader.read()
+        
+    def save(self, path: Union[str, Path], overwrite: bool = False) -> None:
+        """
+        Save the seismic dataset to disk.
+        
+        Args:
+            path: Destination path.
+            overwrite: Whether to overwrite existing dataset.
+        """
+        from .writer import InternalFormatWriter
+        writer = InternalFormatWriter(path, overwrite=overwrite)
+        
+        # Write traces
+        writer.write_traces(self.data)
+        
+        # Write headers
+        # Currently writing all headers to trace_headers
+        # TODO: Support normalized header writing if self.headers is structured that way
+        writer.write_headers(trace_headers=self.headers)
+        
+        # Write metadata
+        writer.write_metadata({'sample_rate': self.sample_rate})
+
