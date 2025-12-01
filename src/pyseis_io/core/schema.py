@@ -11,7 +11,6 @@ import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import importlib.resources
-from . import templates
 
 class SchemaManager:
     """
