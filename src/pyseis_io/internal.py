@@ -71,6 +71,11 @@ class SeismicDatasetLayout:
         """Path to the global metadata JSON file."""
         return self.metadata_dir / "metadata.json"
         
+    @property
+    def provenance_path(self) -> Path:
+        """Path to the provenance YAML file."""
+        return self.metadata_dir / "provenance.yaml"
+        
     def ensure_structure(self) -> None:
         """
         Validates that the dataset exists and conforms to the layout.
@@ -116,15 +121,33 @@ class SeismicDatasetLayout:
         # Write layout metadata
         import yaml
         import datetime
+        import getpass
+        
+        timestamp = datetime.datetime.utcnow().isoformat()
         
         metadata = {
             'layout_version': cls.LAYOUT_VERSION,
-            'created': datetime.datetime.utcnow().isoformat(),
+            'created': timestamp,
             'generator': 'pyseis-io'
         }
         
         with open(layout.layout_metadata_path, 'w') as f:
             yaml.dump(metadata, f)
+            
+        # Initialize provenance history
+        provenance = {
+            'history': [
+                {
+                    'action': 'created',
+                    'timestamp': timestamp,
+                    'user': getpass.getuser(),
+                    'software': 'pyseis-io'
+                }
+            ]
+        }
+        
+        with open(layout.provenance_path, 'w') as f:
+            yaml.dump(provenance, f)
             
         return layout
         
@@ -292,3 +315,36 @@ class InternalFormatWriter:
         # Ensure metadata directory exists (handled by layout.create/ensure_structure)
         with open(self.layout.global_metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
+
+    def append_provenance(self, event: Dict[str, Any]) -> None:
+        """
+        Append an event to the provenance history.
+        
+        Args:
+            event: Dictionary describing the event (e.g., action, timestamp, parameters).
+        """
+        import yaml
+        import datetime
+        import getpass
+        
+        # Ensure base fields
+        if 'timestamp' not in event:
+            event['timestamp'] = datetime.datetime.utcnow().isoformat()
+        if 'user' not in event:
+            event['user'] = getpass.getuser()
+            
+        # Load existing provenance
+        if self.layout.provenance_path.exists():
+            with open(self.layout.provenance_path, 'r') as f:
+                provenance = yaml.safe_load(f) or {'history': []}
+        else:
+            provenance = {'history': []}
+            
+        # Append new event
+        if 'history' not in provenance:
+            provenance['history'] = []
+        provenance['history'].append(event)
+        
+        # Save
+        with open(self.layout.provenance_path, 'w') as f:
+            yaml.dump(provenance, f)
