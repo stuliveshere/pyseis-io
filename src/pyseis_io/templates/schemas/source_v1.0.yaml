@@ -1,0 +1,9 @@
+version: '1.0'
+description: Source attributes schema
+columns:
+  source_id: int32
+  source_index: int32
+  source_x: int32
+  source_y: int32
+  source_z: int32
+  uphole_time: int32

@@ -1,0 +1,13 @@
+version: '1.0'
+description: Trace header attributes schema
+columns:
+  trace_id: int32
+  trace_sequence_number: int32
+  offset: int32
+  total_static: int32
+  trace_identification_code: int32
+  num_samples: int32
+  sample_rate: int32
+  recording_delay: int32
+  coordinate_scalar: int32
+  elevation_scalar: int32
