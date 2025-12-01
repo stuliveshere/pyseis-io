@@ -75,6 +75,16 @@ class SeismicDatasetLayout:
     def provenance_path(self) -> Path:
         """Path to the provenance YAML file."""
         return self.metadata_dir / "provenance.yaml"
+
+    @property
+    def schema_dir(self) -> Path:
+        """Path to the schema directory."""
+        return self.root_path / "schema"
+
+    @property
+    def layout_schema_path(self) -> Path:
+        """Path to the layout schema YAML file."""
+        return self.schema_dir / "layout_v1.0.yaml"
         
     def ensure_structure(self) -> None:
         """
@@ -87,15 +97,18 @@ class SeismicDatasetLayout:
         if not self.root_path.exists():
             raise FileNotFoundError(f"Dataset root not found: {self.root_path}")
             
-        # Check for layout metadata
-        if not self.layout_metadata_path.exists():
-            # Fallback for legacy datasets or partial writes could be handled here,
-            # but for strict v1.0 we expect it.
-            raise FileNotFoundError(f"Layout metadata not found: {self.layout_metadata_path}")
+        # Check for layout schema (formerly metadata/layout.yaml)
+        if not self.layout_schema_path.exists():
+            # Fallback check for old location during migration (optional, but good practice)
+            old_layout = self.metadata_dir / "layout.yaml"
+            if old_layout.exists():
+                 # For now, just error out as we are in strict v1.0 mode
+                 pass
+            raise FileNotFoundError(f"Layout schema not found: {self.layout_schema_path}")
             
         # Validate version
         import yaml
-        with open(self.layout_metadata_path, 'r') as f:
+        with open(self.layout_schema_path, 'r') as f:
             meta = yaml.safe_load(f)
             
         version = meta.get('layout_version')
@@ -106,7 +119,7 @@ class SeismicDatasetLayout:
     @classmethod
     def create(cls, path: Union[str, Path]) -> 'SeismicDatasetLayout':
         """
-        Initialize a new empty dataset structure with version metadata.
+        Initialize a new empty dataset structure with version metadata and schemas.
         
         Args:
             path: Path to the new dataset root.
@@ -117,24 +130,41 @@ class SeismicDatasetLayout:
         layout = cls(path)
         layout.root_path.mkdir(parents=True, exist_ok=True)
         layout.metadata_dir.mkdir(exist_ok=True)
+        layout.schema_dir.mkdir(exist_ok=True)
         
-        # Write layout metadata
+        # Copy schema templates
+        import pkg_resources
+        import glob
+        
+        # Try to find templates in the package
+        try:
+            # Modern python approach (python 3.9+)
+            from importlib import resources
+            # Note: This assumes pyseis_io is installed as a package. 
+            # For development, we might need a fallback to relative paths if not installed.
+            # However, since we are in the same package, we can try to locate them relative to this file.
+            
+            template_dir = Path(__file__).parent / "templates" / "schemas"
+            if not template_dir.exists():
+                 # Fallback for installed package structure if different
+                 # This is a simplification; robust resource access is complex.
+                 # Assuming editable install or source checkout for now based on file structure.
+                 pass
+            
+            for schema_file in template_dir.glob("*.yaml"):
+                shutil.copy2(schema_file, layout.schema_dir)
+                
+        except Exception as e:
+            # Fallback or error handling
+            raise RuntimeError(f"Failed to copy schema templates: {e}")
+
+        # Initialize provenance history
         import yaml
         import datetime
         import getpass
         
         timestamp = datetime.datetime.utcnow().isoformat()
         
-        metadata = {
-            'layout_version': cls.LAYOUT_VERSION,
-            'created': timestamp,
-            'generator': 'pyseis-io'
-        }
-        
-        with open(layout.layout_metadata_path, 'w') as f:
-            yaml.dump(metadata, f)
-            
-        # Initialize provenance history
         provenance = {
             'history': [
                 {

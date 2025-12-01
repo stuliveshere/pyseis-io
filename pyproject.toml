@@ -30,3 +30,6 @@ test = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+pyseis_io = ["templates/schemas/*.yaml"]
+

@@ -1,0 +1,8 @@
+version: '1.0'
+description: Receiver attributes schema
+columns:
+  receiver_id: int32
+  receiver_index: int32
+  receiver_x: int32
+  receiver_y: int32
+  receiver_z: int32
