@@ -174,3 +174,48 @@ class InternalFormatWriter:
         # Write receiver headers
         if receiver_headers is not None:
             receiver_headers.to_parquet(self.layout.receiver_metadata_path)
+    
+    def write_metadata_files(
+        self,
+        signature: Optional[pd.DataFrame] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        survey: Optional[Dict[str, Any]] = None,
+        instrument: Optional[Dict[str, Any]] = None,
+        job: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Write metadata files.
+        
+        Args:
+            signature: DataFrame containing signature data (written to Parquet).
+            properties: Dictionary containing properties metadata (written to YAML).
+            survey: Dictionary containing survey metadata (written to YAML).
+            instrument: Dictionary containing instrument metadata (written to YAML).
+            job: Dictionary containing job metadata (written to YAML).
+        """
+        import yaml
+        
+        # Write signature (Parquet)
+        if signature is not None:
+            signature.to_parquet(self.layout.signature_metadata_path)
+            
+        # Write properties (YAML)
+        if properties is not None:
+            with open(self.layout.properties_metadata_path, 'w') as f:
+                yaml.dump(properties, f, sort_keys=False)
+                
+        # Write survey (YAML)
+        if survey is not None:
+            with open(self.layout.survey_metadata_path, 'w') as f:
+                yaml.dump(survey, f, sort_keys=False)
+                
+        # Write instrument (YAML)
+        if instrument is not None:
+            with open(self.layout.instrument_metadata_path, 'w') as f:
+                yaml.dump(instrument, f, sort_keys=False)
+                
+        # Write job (YAML)
+        if job is not None:
+            with open(self.layout.job_metadata_path, 'w') as f:
+                yaml.dump(job, f, sort_keys=False)
+

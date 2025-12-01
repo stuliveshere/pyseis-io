@@ -76,6 +76,31 @@ class SeismicDatasetLayout:
     def schema_dir(self) -> Path:
         """Path to the schema directory."""
         return self.root_path / "schema"
+    
+    @property
+    def signature_metadata_path(self) -> Path:
+        """Path to the signature metadata Parquet file."""
+        return self.root_path / "signature.parquet"
+        
+    @property
+    def properties_metadata_path(self) -> Path:
+        """Path to the properties metadata YAML file."""
+        return self.metadata_dir / "properties.yaml"
+        
+    @property
+    def survey_metadata_path(self) -> Path:
+        """Path to the survey metadata YAML file."""
+        return self.metadata_dir / "survey.yaml"
+        
+    @property
+    def instrument_metadata_path(self) -> Path:
+        """Path to the instrument metadata YAML file."""
+        return self.metadata_dir / "instrument.yaml"
+        
+    @property
+    def job_metadata_path(self) -> Path:
+        """Path to the job metadata YAML file."""
+        return self.metadata_dir / "job.yaml"
         
     def ensure_structure(self) -> None:
         """
@@ -89,7 +114,7 @@ class SeismicDatasetLayout:
             raise FileNotFoundError(f"Dataset root not found: {self.root_path}")
             
         # Validate schemas using SchemaManager
-        from pyseis_io.schema import SchemaManager
+        from .schema import SchemaManager
         manager = SchemaManager(self.root_path)
         try:
             manager.validate()
@@ -123,7 +148,7 @@ class SeismicDatasetLayout:
         layout.metadata_dir.mkdir(exist_ok=True)
         
         # Install schemas using SchemaManager
-        from pyseis_io.schema import SchemaManager
+        from .schema import SchemaManager
         manager = SchemaManager(layout.root_path)
         manager.install()
 
