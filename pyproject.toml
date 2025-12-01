@@ -19,6 +19,7 @@ dependencies = [
     "dask",
     "pyarrow",
     "pyyaml",
+    "zarr",
 ]
 
 [project.optional-dependencies]
