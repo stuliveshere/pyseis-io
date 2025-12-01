@@ -198,19 +198,23 @@ class InternalFormatWriter:
     - Metadata stored as JSON
     """
     
-    def __init__(self, root_path: Union[str, Path]):
+    def __init__(self, root_path: Union[str, Path], overwrite: bool = False):
         """
         Initialize the writer.
         
         Args:
             root_path: Root directory for the output dataset.
+            overwrite: If True, overwrite existing dataset. If False, raise FileExistsError if dataset exists.
         """
         root_path = Path(root_path)
-        if not root_path.exists():
-            self.layout = SeismicDatasetLayout.create(root_path)
-        else:
-            self.layout = SeismicDatasetLayout(root_path)
-            self.layout.ensure_structure()
+        
+        if root_path.exists():
+            if not overwrite:
+                raise FileExistsError(f"Dataset already exists at {root_path}. Set overwrite=True to replace it.")
+            else:
+                SeismicDatasetLayout.delete(root_path)
+                
+        self.layout = SeismicDatasetLayout.create(root_path)
         
     def write_traces(
         self,
