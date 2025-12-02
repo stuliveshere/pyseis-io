@@ -161,3 +161,43 @@ class SchemaManager:
                         f"Schema integrity check failed for {component}. "
                         f"Expected {hash_val}, got {actual_hash}"
                     )
+    
+    def validate_dataframe(self, df, schema_name: str) -> None:
+        """
+        Validate a DataFrame against a schema.
+        
+        Args:
+            df: pandas DataFrame to validate
+            schema_name: Name of the schema (e.g., 'source', 'receiver', 'trace_header')
+            
+        Raises:
+            FileNotFoundError: If schema file not found
+            ValueError: If DataFrame doesn't match schema requirements
+        """
+        import yaml
+        import pandas as pd
+        
+        if df is None:
+            return
+            
+        # Load the schema
+        schema_path = self.schema_dir / schema_name / "v1.0.yaml"
+        if not schema_path.exists():
+            raise FileNotFoundError(f"Schema file not found: {schema_path}")
+            
+        with open(schema_path, 'r') as f:
+            schema = yaml.safe_load(f)
+            
+        if 'columns' not in schema:
+            return  # No column validation needed
+            
+        schema_cols = set(schema['columns'].keys())
+        df_cols = set(df.columns)
+        
+        # Check for missing required columns
+        missing = schema_cols - df_cols
+        if missing:
+            raise ValueError(
+                f"{schema_name} validation failed: Missing required columns: {missing}"
+            )
+
