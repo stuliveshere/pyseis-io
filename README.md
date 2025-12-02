@@ -1,29 +1,24 @@
 # pyseis-io
 
-A standalone I/O library for seismic data, providing readers and writers for multiple industry-standard formats.
+A standalone I/O library for seismic data with a validated internal format and support for multiple industry-standard formats.
 
 ## Overview
 
-`pyseis-io` is a foundational library extracted from PySeis that handles all file format I/O operations for seismic data. It provides a clean, stable interface for reading and writing seismic data in various formats, independent of higher-level processing tools.
+`pyseis-io` is a foundational library extracted from PySeis that provides:
 
-## Features
-
-- **Multiple Format Support**: Read and write SEG-Y, SEG-D, SU, JavaSeis, and export to GeoPackage
-- **Unified Data Model**: Consistent `SeismicData` interface across all formats
+- **Validated Internal Format**: Zarr + Parquet + YAML/JSON with schema-driven validation
+- **Multiple Format Support**: Read/write SEG-Y, SEG-D, SU, and export to GeoPackage
 - **Lazy Loading**: Efficient handling of large datasets with Dask integration
-- **Header Mapping**: Automatic conversion between format-specific headers and unified schema
-- **Endian Handling**: Automatic IBM/IEEE floating-point conversion
+- **Strict Validation**: Schema integrity, data consistency, and provenance tracking
 
-## Supported Formats
+## Key Features
 
-### Readers/Writers
-- **SEG-Y**: Industry-standard seismic data format
-- **SEG-D**: Field recording format (legacy implementation)
-- **Seismic Unix (SU)**: Open-source seismic processing format
-- **JavaSeis**: High-performance seismic data storage
-
-### Exporters
-- **GeoPackage (.gpkg)**: Export navigation data for GIS applications
+- **Zarr-based trace storage**: Chunked, compressed, lazy I/O for trace data
+- **Parquet headers**: Columnar, efficient slicing for trace/source/receiver metadata
+- **Schema validation**: All metadata components validated against YAML schemas
+- **Provenance tracking**: Automatic history of all dataset operations
+- **Lazy operations**: Data stays on disk until explicitly computed
+- **Unified API**: Consistent `SeismicData` interface across all operations
 
 ## Installation
 
@@ -33,37 +28,215 @@ pip install -e .
 
 ## Quick Start
 
-### Reading SEG-Y Data
+### Creating a Dataset
+
+```python
+import numpy as np
+import pandas as pd
+from pyseis_io.core.writer import InternalFormatWriter
+
+# Create synthetic data
+data = np.random.randn(100, 2000).astype(np.float32)
+headers = pd.DataFrame({
+    "trace_id": np.arange(100, dtype=np.int32),
+    "source_id": ["0"] * 100,
+    "receiver_id": ["0"] * 100,
+    "cdp_id": ["0"] * 100,
+    "trace_sequence_number": np.arange(100, dtype=np.int32),
+    "offset": np.linspace(10, 1000, 100, dtype=np.float32),
+    "mute_start": np.zeros(100, dtype=np.float32),
+    "mute_end": np.zeros(100, dtype=np.float32),
+    "total_static": np.zeros(100, dtype=np.float32),
+    "trace_identification_code": np.ones(100, dtype=np.int32),
+    "correlated": np.zeros(100, dtype=bool),
+    "trace_weighting_factor": np.ones(100, dtype=np.float32)
+})
+
+# Write dataset
+writer = InternalFormatWriter("my_dataset", overwrite=True)
+writer.write_traces(data)
+writer.write_headers(trace_headers=headers)
+writer.write_metadata({"sample_rate": 0.002})
+```
+
+### Reading a Dataset
+
+```python
+from pyseis_io.core.dataset import SeismicData
+
+# Open dataset
+sd = SeismicData.open("my_dataset")
+
+# Access properties
+print(f"Traces: {sd.n_traces}, Samples: {sd.n_samples}")
+print(f"Sample rate: {sd.sample_rate}")
+
+# Access headers (lazy)
+headers_df = sd.headers  # Pandas DataFrame
+
+# Access trace data (lazy Dask array)
+traces = sd.data
+```
+
+### Slicing and Computing
+
+```python
+# Slice dataset (lazy - returns new SeismicData view)
+subset = sd[10:20]      # Traces 10-19
+decimated = sd[::2]     # Every other trace
+single = sd[0]          # Single trace (1D array)
+
+# Materialize data into memory
+traces_np, headers_df = sd.compute()
+```
+
+### Saving Derived Datasets
+
+```python
+# Save a subset
+sd[0:50].save("subset_dataset", overwrite=True)
+```
+
+## Dataset Structure
+
+Every dataset follows a strict on-disk layout:
+
+```
+<dataset_root>/
+    traces.zarr/                 # Zarr group containing trace data
+        data/                    # Chunked, compressed trace array
+    
+    trace.parquet                # Trace headers (required)
+    source.parquet               # Source metadata (optional)
+    receiver.parquet             # Receiver metadata (optional)
+    signature.parquet            # Signature data (optional)
+    
+    metadata/
+        metadata.json            # Global metadata (required)
+        provenance.yaml          # Operation history
+        schema_manifest.yaml     # Schema checksums and versions
+        properties.yaml          # Optional properties
+        survey.yaml              # Optional survey info
+        instrument.yaml          # Optional instrument info
+        job.yaml                 # Optional job info
+    
+    schema/
+        <component>/
+            vX.Y.yaml            # Installed schema definitions
+```
+
+## Core API
+
+### SeismicData
+
+Primary in-memory representation of a dataset:
+
+```python
+# Properties
+sd.n_traces       # Number of traces
+sd.n_samples      # Trace length
+sd.headers        # Pandas DataFrame (Arrow-backed)
+sd.data           # Dask array
+sd.sample_rate    # Sample rate in seconds
+sd.file_path      # Dataset location
+
+# Methods
+sd.open(path)           # Class method to load dataset
+sd.save(path)           # Save to new location
+sd.compute()            # Materialize traces and headers
+sd.close()              # Release resources
+sd[slice]               # Slice dataset (returns new SeismicData)
+```
+
+### InternalFormatWriter
+
+Write datasets in the internal format:
+
+```python
+writer = InternalFormatWriter(root, overwrite=True)
+
+# Write trace data (NumPy or Dask arrays)
+writer.write_traces(data, chunks=None, compressor='blosc', compression_level=5)
+
+# Write headers with schema validation
+writer.write_headers(
+    trace_headers=df,
+    source_headers=None,
+    receiver_headers=None
+)
+
+# Write metadata
+writer.write_metadata({"sample_rate": 0.002})
+
+# Write optional metadata blocks
+writer.write_metadata_files(
+    signature=df,
+    properties={"units": "ms"},
+    survey={...},
+    instrument={...},
+    job={...}
+)
+
+# Append provenance
+writer.append_provenance({"action": "processing", "details": "..."})
+```
+
+### InternalFormatReader
+
+Load datasets (typically used via `SeismicData.open()`):
+
+```python
+from pyseis_io.core.reader import InternalFormatReader
+
+reader = InternalFormatReader(path)
+sd = reader.read()  # Returns SeismicData
+```
+
+## Validation and Error Handling
+
+The library performs strict validation:
+
+### File Presence
+- `traces.zarr/` must exist
+- `trace.parquet` must exist
+- `metadata/metadata.json` must exist
+
+### Schema Integrity
+- All schema files validated against checksums
+- Headers validated against schema column definitions
+- Missing required columns raise `ValueError`
+
+### Data Integrity
+- Header count must match trace count
+- `sample_rate` required in metadata
+- Invalid slices raise appropriate exceptions
+
+## Legacy Format Support
+
+### SEG-Y
 
 ```python
 from pyseis_io.segy import SEGYReader
 
-# Open a SEG-Y file
-reader = SEGYReader('path/to/file.sgy')
-
-# Access headers and traces
+reader = SEGYReader('file.sgy')
 print(reader.text_header)
-print(reader.binary_header)
 traces = reader.read_trace(0)
 ```
 
-### Reading SEG-D Data
+### SEG-D
 
 ```python
 from pyseis_io.segd import SegD
 
-# Open SEG-D file
-reader = SegD('path/to/file.segd')
+reader = SegD('file.segd')
 data = reader.read()
 ```
 
-### Exporting to GeoPackage
+### GeoPackage Export
 
 ```python
 from pyseis_io.gpkg import export_headers_to_gis
-from pyseis_io.models import SeismicData
 
-# Export navigation data
 export_headers_to_gis(seismic_data, 'output.gpkg', format='gpkg')
 ```
 
@@ -71,73 +244,66 @@ export_headers_to_gis(seismic_data, 'output.gpkg', format='gpkg')
 
 ```
 pyseis_io/
-├── models.py          # Core data models (SeismicData, ParquetHeaderStore)
-├── base.py            # Base reader/writer interfaces
-├── utils.py           # Utility functions (IBM/IEEE conversion)
-├── maps.py            # Header mapping definitions
-├── segy/              # SEG-Y format support
-├── segd/              # SEG-D format support (wrapper)
-├── su/                # Seismic Unix format support
-├── javaseis/          # JavaSeis format support
-├── gpkg/              # GeoPackage export support
-├── rsf/               # Madagascar RSF format support
-├── seisdata/          # Legacy SeisData implementation
-└── legacy/            # Legacy implementations (for reference)
-    ├── segd_construct/
-    └── segd_yaml/
-```
-
-## Data Models
-
-### SeismicData
-
-Modern lazy-loading container for seismic data:
-
-```python
-from pyseis_io.models import SeismicData
-
-# Access data and headers
-n_traces = data.n_traces
-n_samples = data.n_samples
-headers_df = data.headers  # Pandas DataFrame
-trace_data = data.data.compute()  # Dask array
-
-# Slice data (lazy)
-subset = data[0:100]
-```
-
-### SeisData
-
-Legacy implementation with schema-based metadata:
-
-```python
-from pyseis_io.seisdata import SeisData
-
-# Initialize with schema
-data = SeisData('path/to/schema.yaml')
+├── core/                  # Core internal format implementation
+│   ├── dataset.py         # SeismicData and ParquetHeaderStore
+│   ├── layout.py          # SeismicDatasetLayout
+│   ├── reader.py          # InternalFormatReader
+│   ├── writer.py          # InternalFormatWriter
+│   └── schema.py          # SchemaManager
+├── templates/
+│   └── schemas/           # Schema definitions (YAML)
+├── segy/                  # SEG-Y format support
+├── segd/                  # SEG-D format support
+├── su/                    # Seismic Unix format support
+├── gpkg/                  # GeoPackage export
+└── legacy/                # Legacy implementations
 ```
 
 ## Dependencies
 
-- numpy
-- pandas
-- dask
-- pyarrow
-- pyyaml
-- construct
-- geopandas (for GeoPackage export)
+- **numpy**: Array operations
+- **pandas**: DataFrame handling
+- **dask**: Lazy array operations
+- **zarr**: Chunked array storage
+- **pyarrow**: Parquet I/O and Arrow types
+- **pyyaml**: YAML parsing
+- **construct**: Binary format parsing (SEG-Y/SEG-D)
+- **geopandas**: GeoPackage export (optional)
 
 ## Development
 
 ### Running Tests
 
 ```bash
-pytest
+# Run all core tests
+pytest tests/core/
+
+# Run specific test file
+pytest tests/core/test_internal_format.py
+
+# Run with verbose output
+pytest tests/core/ -v
 ```
 
-### Project Status
+### Test Coverage
 
-This library was recently extracted from PySeis to establish a stable, reusable I/O layer. Some components are marked as "legacy" and will be refactored or replaced in future versions.
+The core functionality has comprehensive unit tests covering:
+- Dataset creation and overwriting
+- Writing (NumPy/Dask arrays, headers, metadata)
+- Reading and slicing operations
+- Compute functionality
+- Provenance tracking
+- Schema validation
+- Error handling
+- Round-trip integrity
+
+## Design Principles
+
+1. **Lazy Access**: Traces stay on disk via Dask + Zarr until `.compute()`
+2. **Schema-Driven Validation**: All metadata tables validated through YAML schemas
+3. **Strict Invariants**: Required file presence enforced at read time
+4. **Slice-Stable Access**: Slices preserve alignment between traces and headers
+5. **Immutable Lineage**: Provenance file grows append-only
 
 ## License
 
@@ -147,3 +313,6 @@ GNU Affero General Public License v3.0
 
 - **PySeis**: Higher-level seismic data processing library that depends on pyseis-io
 
+## Documentation
+
+For detailed architecture and API documentation, see [docs/architecture.md](docs/architecture.md).
