@@ -45,6 +45,15 @@ class InternalFormatReader:
             
         if sample_rate is None:
             raise ValueError("sample_rate is required in metadata.json but was not found")
+        
+        # Validate header/trace count consistency (Issue #58)
+        n_traces = data.shape[0]
+        n_headers = len(header_store)
+        if n_traces != n_headers:
+            raise ValueError(
+                f"Header/trace count mismatch: {n_headers} headers but {n_traces} traces. "
+                f"Dataset is corrupted or incomplete."
+            )
                 
         return SeismicData(
             data=data,
