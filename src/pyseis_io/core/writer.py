@@ -164,6 +164,14 @@ class InternalFormatWriter:
             source_headers: Optional DataFrame containing source attributes.
             receiver_headers: Optional DataFrame containing receiver attributes.
         """
+        # Validate headers against schemas (Issue #62)
+        from .schema import SchemaManager
+        manager = SchemaManager(self.layout.root_path)
+        
+        manager.validate_dataframe(trace_headers, "trace_header")
+        manager.validate_dataframe(source_headers, "source")
+        manager.validate_dataframe(receiver_headers, "receiver")
+        
         # Write trace headers
         trace_headers.to_parquet(self.layout.trace_metadata_path)
         
