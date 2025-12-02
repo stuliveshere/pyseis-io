@@ -95,7 +95,7 @@ class InternalFormatWriter:
         else:
             # Convert numpy array to Zarr using open_array
             # We open the group first, then create the array
-            root = zarr.open_group(traces_group_path, mode='a', zarr_format=2)
+            root = zarr.open_group(traces_group_path, mode='a', zarr_version=2)
             z = root.create_dataset(
                 'data',
                 shape=data.shape,

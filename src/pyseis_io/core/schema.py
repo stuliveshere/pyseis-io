@@ -6,10 +6,9 @@ Handles schema template access, installation, versioning, and validation.
 
 import hashlib
 import yaml
-import shutil
 import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 import importlib.resources
 
 class SchemaManager:
@@ -96,12 +95,18 @@ class SchemaManager:
 
     def _write_manifest(self, schemas: Dict[str, Any]) -> None:
         """Write the schema manifest file."""
-        import pyseis_io
+        # Get version using importlib.metadata
+        try:
+            from importlib.metadata import version
+            pyseis_io_version = version("pyseis-io")
+        except Exception:
+            # Fallback if not installed or in development
+            pyseis_io_version = "unknown"
         
         manifest = {
             "schemas": schemas,
             "generated_by": {
-                "pyseis_io_version": "0.1.0", # TODO: Get actual version
+                "pyseis_io_version": pyseis_io_version,
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
         }

@@ -116,21 +116,7 @@ class SeismicDatasetLayout:
         # Validate schemas using SchemaManager
         from .schema import SchemaManager
         manager = SchemaManager(self.root_path)
-        try:
-            manager.validate()
-        except FileNotFoundError:
-            # Fallback for datasets created before SchemaManager (Issue #42 era)
-            # They might have flat schema files but no manifest.
-            # For strict v1.0 compliance going forward, we could enforce it,
-            # but let's check for at least the layout schema file if manifest is missing.
-            layout_schema = self.schema_dir / "layout_v1.0.yaml"
-            if not layout_schema.exists():
-                 # Check legacy location
-                 if not (self.metadata_dir / "layout.yaml").exists():
-                     raise FileNotFoundError("Layout schema not found (checked manifest and legacy paths)")
-        
-        # We can still do a quick version check if we want, or rely on SchemaManager
-        # For now, let's trust SchemaManager.validate() handles integrity.
+        manager.validate()
 
     @classmethod
     def create(cls, path: Union[str, Path]) -> 'SeismicDatasetLayout':
