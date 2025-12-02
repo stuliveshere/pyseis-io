@@ -28,23 +28,23 @@ class InternalFormatReader:
         """
         # Read traces (lazy)
         traces_path = str(self.layout.traces_path)
-        # We expect data to be in 'data' group
-        try:
-            data = da.from_zarr(traces_path, component='data')
-        except (ValueError, KeyError):
-            # Fallback for legacy or root-level arrays
-            data = da.from_zarr(traces_path)
+        # Data must be in 'data' component
+        data = da.from_zarr(traces_path, component='data')
             
         # Read headers (lazy)
         # Currently mapping trace.parquet to the main header store
         header_store = ParquetHeaderStore(str(self.layout.trace_metadata_path))
         
         # Read metadata for sample rate
-        sample_rate = 0.0
-        if self.layout.global_metadata_path.exists():
-            with open(self.layout.global_metadata_path, 'r') as f:
-                meta = json.load(f)
-                sample_rate = meta.get('sample_rate', 0.0)
+        if not self.layout.global_metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {self.layout.global_metadata_path}")
+            
+        with open(self.layout.global_metadata_path, 'r') as f:
+            meta = json.load(f)
+            sample_rate = meta.get('sample_rate')
+            
+        if sample_rate is None:
+            raise ValueError("sample_rate is required in metadata.json but was not found")
                 
         return SeismicData(
             data=data,
