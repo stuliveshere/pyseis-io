@@ -117,6 +117,19 @@ class SeismicDatasetLayout:
         from .schema import SchemaManager
         manager = SchemaManager(self.root_path)
         manager.validate()
+        
+        # Validate required files exist (Issue #60)
+        required_files = [
+            (self.traces_path, "Traces Zarr directory"),
+            (self.trace_metadata_path, "Trace metadata Parquet file"),
+            (self.global_metadata_path, "Global metadata JSON file")
+        ]
+        
+        for path, description in required_files:
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"{description} not found: {path}. Dataset is incomplete or corrupted."
+                )
 
     @classmethod
     def create(cls, path: Union[str, Path]) -> 'SeismicDatasetLayout':
