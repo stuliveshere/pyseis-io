@@ -10,30 +10,15 @@ columns:
   receiver_id:
     dtype: string
     description: 'receiver id (foreign key)'
-  cdp_id:
-    dtype: string
-    description: 'cdp id (foreign key)'
+
   trace_sequence_number:
     dtype: int32
     description: 'trace sequence number in gather'
-  offset:
-    dtype: float32
-    description: 'distance from source to receiver'
-  mute_start:
-    dtype: float32
-    description: 'start of mute time'
-  mute_end:
-    dtype: float32
-    description: 'end of mute time'
-  total_static:
-    dtype: float32
-    description: 'total static applied to trace, e.g. source + receiver + cdp static'
+
   trace_identification_code:
     dtype: int32
     description: 'trace identification code, 0: invalid, 1: valid, 2: padding'
-  correlated:
-    dtype: bool
-    description: 'correlated trace flag'
+
   trace_weighting_factor:
     dtype: float32
     description: 'trace weighting factor'
