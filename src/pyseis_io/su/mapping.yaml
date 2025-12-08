@@ -1,0 +1,35 @@
+# Default Mapping: SU Header Code -> SeisData Column Name
+# Trace related
+tracl: trace_id
+tracr: trace_sequence_number
+offset: offset
+tstat: total_static
+trid: trace_identification_code
+cdp: cdp_id
+muts: mute_start
+mute: mute_end
+corr: correlated
+trwf: trace_weighting_factor
+
+# Data related
+ns: num_samples
+dt: sample_rate
+delrt: recording_delay
+
+# Coordinate system
+scalco: coordinate_scalar
+scalel: elevation_scalar
+
+# Source related
+fldr: source_id
+ep: source_index
+sx: source_x
+sy: source_y
+sdepth: source_z
+sut: uphole_time
+
+# Receiver related
+tracf: receiver_index
+gx: receiver_x
+gy: receiver_y
+gelev: receiver_z

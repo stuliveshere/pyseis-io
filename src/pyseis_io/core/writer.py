@@ -224,12 +224,13 @@ class InternalFormatWriter:
         with open(self.layout.provenance_path, 'w') as f:
             yaml.dump(provenance, f)
 
-    def write_headers(self, trace_headers: pd.DataFrame) -> None:
+    def write_headers(self, trace_headers: pd.DataFrame, mapping: Optional[Dict[str, str]] = None) -> None:
         """
         Write headers with strict normalization to Source, Receiver, and Trace tables.
         
         Args:
             trace_headers: Flat DataFrame containing all headers.
+            mapping: Optional dictionary to rename columns (Format Key -> Core Key) before processing.
             
         Raises:
             ValueError: If source_id or receiver_id validation fails.
@@ -240,6 +241,10 @@ class InternalFormatWriter:
         
         # Work on a copy to allow modification (dropping globals/columns)
         df = trace_headers.copy()
+        
+        # Apply Mapping if provided
+        if mapping:
+            df = df.rename(columns=mapping)
         
         # 0. Extract Globals
         self._extract_and_write_globals(df)

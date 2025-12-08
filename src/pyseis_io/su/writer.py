@@ -48,38 +48,20 @@ class SUWriter:
              
         self.su_headers = self.header_def['SU_TRACE_HEADER']['definition']
         
-        # Create reverse mapping
-        # SEISDATA_KEY -> SU_KEY
-        # Note: SU_TO_SEISDATA might map multiple SU keys to same SeisData key?
-        # e.g. tracr -> receiver_id AND tracr -> trace_sequence_number?
-        # In the provided mapping:
-        # "tracr": "receiver_id"
-        # "tracr": "trace_sequence_number"
-        # Wait, dictionary keys must be unique. The provided mapping in the plan had duplicate keys!
-        # "tracr": "receiver_id" appeared first, then "tracr": "trace_sequence_number" appeared later.
-        # Python dicts will overwrite. So "tracr" maps to "trace_sequence_number" (the last one).
-        # This means we lost "receiver_id" mapping for "tracr".
-        # Let's check the mapping again.
-        
-        # SU_TO_SEISDATA in reader.py:
-        # ...
-        # "tracr": "receiver_id",
-        # ...
-        # "tracr": "trace_sequence_number",
-        # ...
-        
-        # Yes, it overwrites. This is a bug in the plan/mapping provided.
-        # However, for writing, we need to know which SeisData field goes to which SU field.
-        # If we have "trace_sequence_number" -> "tracr", that's fine.
-        # But what about "receiver_id"? It won't map back to "tracr" if we use the dict reversed.
-        
-        # We should probably fix the mapping or handle it.
-        # For now, I will implement a reverse mapping that tries to be smart or just reverses the dict (which is lossy if duplicates exist).
-        # Given the overwrite, "receiver_id" is NOT in the values of SU_TO_SEISDATA effectively.
-        # So we can't map it back automatically.
-        
-        # I will proceed with the reverse of the effective dictionary.
-        self.reverse_mapping = {v: k for k, v in SU_TO_SEISDATA.items()}
+        # Load Mapping
+        mapping_path = Path(__file__).parent / "mapping.yaml"
+        if not mapping_path.exists():
+             raise FileNotFoundError(f"Mapping file not found: {mapping_path}")
+             
+        with open(mapping_path, 'r') as f:
+             self.mapping = yaml.safe_load(f)
+             
+        # Create reverse mapping: Core -> SU
+        # If duplicated values in SU->Core, we lose one.
+        # e.g. "tracr": "trace_sequence_number" and "foo": "trace_sequence_number".
+        # We need to pick one. The mapping file should be 1-to-1 ideally for round trip.
+        # Or prioritized.
+        self.reverse_mapping = {v: k for k, v in self.mapping.items()}
 
     def export(self, output_su_path: Union[str, Path], endian: str = '<') -> None:
         """

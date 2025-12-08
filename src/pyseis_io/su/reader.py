@@ -10,31 +10,13 @@ from pyseis_io.core.writer import InternalFormatWriter
 
 # Mapping SU headers to SeisData schema
 # Key: SU header name (from su.yaml) -> Value: SeisData column name
-SU_TO_SEISDATA = {
-    # Trace related
-    "tracl": "trace_id", "tracr": "trace_sequence_number", "offset": "offset", 
-    "tstat": "total_static", "trid": "trace_identification_code",
-    "cdp": "cdp_id", "muts": "mute_start", "mute": "mute_end",
-    "corr": "correlated", "trwf": "trace_weighting_factor",
-    # Data related
-    "ns": "num_samples", "dt": "sample_rate", "delrt": "recording_delay",
-    # Coordinate system
-    "scalco": "coordinate_scalar", "scalel": "elevation_scalar",
-    # Source related
-    "fldr": "source_id", "ep": "source_index", "sx": "source_x", 
-    "sy": "source_y", "sdepth": "source_z", "sut": "uphole_time",
-    # Receiver related
-    "tracf": "receiver_index", "gx": "receiver_x", 
-    "gy": "receiver_y", "gelev": "receiver_z",
-}
-
 class SUConverter:
     """
     Reader for Seismic Unix files that converts to pyseis-io internal format.
     Supports 'Scan -> Modify -> Convert' workflow.
     """
     
-    def __init__(self, su_path: Union[str, Path], header_def: Optional[str] = None):
+    def __init__(self, su_path: Union[str, Path], header_def: Optional[str] = None, mapping_path: Optional[str] = None):
         """
         Initialize the SU Converter.
         
@@ -42,6 +24,8 @@ class SUConverter:
             su_path: Path to the SU file.
             header_def: Optional path to a YAML file defining the SU header structure.
                         Defaults to src/pyseis_io/su/su.yaml.
+            mapping_path: Optional path to a YAML file defining SU->Core mapping.
+                          Defaults to src/pyseis_io/su/mapping.yaml.
         """
         self.su_path = Path(su_path)
         if not self.su_path.exists():
@@ -64,19 +48,23 @@ class SUConverter:
              
         self.su_headers = self.header_def['SU_TRACE_HEADER']['definition']
         
-        # Verify required keys in custom definition
-        required_keys = [k for k in SU_TO_SEISDATA.keys()]
-        # We check if keys used in mapping exist in definition
-        for key in required_keys:
-             if key not in self.su_headers:
-                  # Warning or Error? Let's error if critical.
-                  # But some files might miss some headers.
-                  # The converter logic needs these keys to map.
-                  # If the key isn't in definition, we can't read it.
-                  # However, the USER might provide a custom definition that renames/excludes things.
-                  # For now, require keys in SU_TO_SEISDATA to be present in definition
-                  # if we want to map them.
-                  pass
+        # Load Mapping
+        if mapping_path:
+             self.mapping_path = Path(mapping_path)
+        else:
+             self.mapping_path = Path(__file__).parent / "mapping.yaml"
+             
+        if not self.mapping_path.exists():
+             raise FileNotFoundError(f"Mapping file not found: {self.mapping_path}")
+             
+        with open(self.mapping_path, 'r') as f:
+             self.mapping = yaml.safe_load(f)
+
+        # Verify mapping keys exist in header definition (Optional, but good for validation)
+        # for k in self.mapping.keys():
+        #     if k not in self.su_headers:
+        #          # Warning?
+        #          pass
         
         # Internal state
         self._endian = None
@@ -87,95 +75,7 @@ class SUConverter:
         self._initial_trace_count = 0
         self._trace_stride = 0
 
-    def _detect_endianness(self, f) -> str:
-        """
-        Detect endianness by checking ns and dt sanity.
-        """
-        # Read first 240 bytes
-        f.seek(0)
-        header_bytes = f.read(240)
-        if len(header_bytes) < 240:
-             raise ValueError("File too short for header")
-             
-        # Definition for ns and dt
-        ns_def = self.su_headers.get('ns')
-        dt_def = self.su_headers.get('dt')
-        
-        if not ns_def or not dt_def:
-             raise ValueError("ns and dt must be defined in header definition")
-             
-        # Helper to read value
-        def read_val(bytes_data, def_, endian):
-             start = def_['start_byte']
-             n_bytes = def_['num_bytes']
-             fmt = self._get_fmt_char(def_['format'], n_bytes)
-             return struct.unpack(f'{endian}{fmt}', bytes_data[start:start+n_bytes])[0]
-             
-        # Check Little Endian
-        ns_le = read_val(header_bytes, ns_def, '<')
-        dt_le = read_val(header_bytes, dt_def, '<')
-        
-        # Check Big Endian
-        ns_be = read_val(header_bytes, ns_def, '>')
-        dt_be = read_val(header_bytes, dt_def, '>')
-        
-        # Heuristics
-        # ns should be positive and reasonable (e.g. < 100,000)
-        # dt is usually in microseconds (e.g. 1000, 2000, 4000)
-        
-        is_le_valid = 0 < ns_le < 100000 and 0 <= dt_le < 1000000
-        is_be_valid = 0 < ns_be < 100000 and 0 <= dt_be < 1000000
-        
-        # refinement using file size
-        file_size = self.su_path.stat().st_size
-        if is_le_valid:
-            stride_le = 240 + ns_le * 4
-            if file_size % stride_le != 0 and file_size > stride_le: # Allow truncated if just scanning? No, scan assumes structure.
-                 # If file is perfectly valid size for BE but not LE, that's a strong hint.
-                 # But real files might be truncated.
-                 # Let's give a "score" or strictly prefer the one that fits.
-                 pass
-        
-        if is_le_valid and is_be_valid:
-             # Check consistency
-             stride_le = 240 + ns_le * 4
-             stride_be = 240 + ns_be * 4
-             
-             consistent_le = (file_size % stride_le == 0)
-             consistent_be = (file_size % stride_be == 0)
-             
-             if consistent_le and not consistent_be:
-                 return '<'
-             if consistent_be and not consistent_le:
-                 return '>'
-                 
-             # Still ambiguous? Default to LE with warning.
-             print("Warning: Endianness ambiguous (both valid and size-consistent), defaulting to Little Endian.")
-             return '<'
-
-        if is_le_valid and not is_be_valid:
-             return '<'
-        if is_be_valid and not is_le_valid:
-             return '>'
-             
-        raise ValueError("Could not detect valid endianness.")
-
-    def _get_fmt_char(self, fmt_type, n_bytes):
-        """Map SU format/bytes to struct format character."""
-        if fmt_type == 'uint':
-            if n_bytes == 2: return 'H'
-            if n_bytes == 4: return 'I'
-        elif fmt_type == 'int':
-            if n_bytes == 2: return 'h'
-            if n_bytes == 4: return 'i'
-        elif fmt_type == 'float':
-            if n_bytes == 4: return 'f'
-            if n_bytes == 8: return 'd'
-        
-        # Fallback
-        if n_bytes == 2: return 'h'
-        if n_bytes == 4: return 'i'
-        return 'i' # Default
+    # ... _detect_endianness and _get_fmt_char ...
 
     def scan(self) -> pd.DataFrame:
         """
@@ -183,7 +83,7 @@ class SUConverter:
         This reads ALL headers efficiently without reading trace data.
         
         Returns:
-            pd.DataFrame: The headers dataframe.
+            pd.DataFrame: The headers dataframe (with SU column names).
         """
         with open(self.su_path, 'rb') as f:
             # 1. Detect Endianness & Geometry
@@ -214,17 +114,11 @@ class SUConverter:
             self._initial_trace_count = self._file_size // self._trace_stride
             
             # 2. Memory Map & Stride Tricks
-            # We want to view the file as an array of traces, but only read the first 240 bytes of each trace.
             mmap = np.memmap(self.su_path, dtype='uint8', mode='r')
-            
-            # Ensure we don't go out of bounds if file is truncated
             cutoff = self._initial_trace_count * self._trace_stride
             if cutoff > len(mmap):
                  mmap = mmap[:cutoff]
             
-            # Create a strided view of headers: (n_traces, 240)
-            # shape=(n_traces, 240)
-            # strides=(trace_stride, 1)
             headers_view = np.lib.stride_tricks.as_strided(
                 mmap, 
                 shape=(self._initial_trace_count, 240), 
@@ -238,23 +132,8 @@ class SUConverter:
                 n_bytes = def_['num_bytes']
                 fmt = def_['format']
                 
-                # Extract byte slice for this column across all traces
-                # View: (n_traces, n_bytes)
                 col_view = headers_view[:, start:start+n_bytes]
                 
-                # Convert to numpy array of correct type
-                # We need to copy to contiguous memory to view as type
-                # Optimization: Can we avoid copy? struct.unpack needs bytes. 
-                # np.frombuffer needs contiguous.
-                # headers_view is strided, so rows are far apart.
-                # But within a row (header), bytes are contiguous.
-                # However, col_view[:, :] is not contiguous in memory as a block.
-                
-                # Efficient way:
-                # np.ndarray(buffer=mmap, dtype=..., offset=start, strides=trace_stride)
-                # This works if endianness matches native.
-                
-                # Map SU types to numpy dtypes
                 np_dtype = None
                 if fmt in ['int', 'uint']:
                     if n_bytes == 2: np_dtype = np.int16 if fmt=='int' else np.uint16
@@ -264,10 +143,6 @@ class SUConverter:
                     elif n_bytes == 8: np_dtype = np.float64
                 
                 if np_dtype:
-                    # Create strided view for this column
-                    # Note: offset is absolute in file.
-                    # start is relative to trace start.
-                    # We start at 'start' byte of file.
                     col_array = np.ndarray(
                         shape=(self._initial_trace_count,),
                         dtype=np_dtype,
@@ -276,64 +151,41 @@ class SUConverter:
                         strides=(self._trace_stride,)
                     )
                     
-                    # Handle Endianness
-                    # If file endianness != system endianness, byteswap
                     sys_endian = '<' if np.little_endian else '>'
                     if self._endian != sys_endian:
                         data_dict[key] = col_array.byteswap()
                     else:
-                        data_dict[key] = col_array.copy() # Copy to decouple from mmap
+                        data_dict[key] = col_array.copy()
                 
             # Create DataFrame
             self.headers = pd.DataFrame(data_dict)
             
-            # 4. Map & Scale
-            self._map_and_scale()
+            # 4. Scale (Apply SU-specific scaling BEFORE mapping)
+            self._apply_scalars_raw()
             
             return self.headers
 
-    def _map_and_scale(self):
-        """Map SU headers to SeisData and apply defaults."""
+    def _apply_scalars_raw(self):
+        """Apply SU scalar logic to raw SU columns."""
         if self.headers is None: return
         
-        # Renaissance mapping
-        renamed_df = self.headers.rename(columns=SU_TO_SEISDATA)
+        df = self.headers
         
-        # Apply Scalars
-        if 'coordinate_scalar' in renamed_df.columns:
-            coords = ['source_x', 'source_y', 'receiver_x', 'receiver_y']
+        # Coordinate Scalar (scalco)
+        if 'scalco' in df.columns:
+            # scalco applies to sx, sy, gx, gy
+            coords = ['sx', 'sy', 'gx', 'gy']
             for col in coords:
-                if col in renamed_df.columns:
-                    renamed_df[col] = self._apply_scalar(renamed_df[col], renamed_df['coordinate_scalar'])
+                if col in df.columns:
+                    df[col] = self._apply_scalar(df[col], df['scalco'])
                     
-        if 'elevation_scalar' in renamed_df.columns:
-            elev_cols = ['source_z', 'receiver_z'] # mapped in SU_TO_SEISDATA
-            for col in elev_cols:
-                if col in renamed_df.columns:
-                    renamed_df[col] = self._apply_scalar(renamed_df[col], renamed_df['elevation_scalar'])
-
-        # Type Conversions
-        # String IDs
-        for col in ['source_id', 'receiver_id', 'cdp_id']:
-            if col in renamed_df.columns:
-                renamed_df[col] = renamed_df[col].astype(str)
-        
-        # Special case for receiver_id if overwritten
-        if 'receiver_id' not in renamed_df.columns and 'trace_sequence_number' in renamed_df.columns:
-             renamed_df['receiver_id'] = renamed_df['trace_sequence_number'].astype(str)
-             
-        # Bool
-        if 'correlated' in renamed_df.columns:
-            renamed_df['correlated'] = renamed_df['correlated'].astype(bool)
-            
-        # Defaults
-        if 'trace_weighting_factor' not in renamed_df.columns:
-            renamed_df['trace_weighting_factor'] = 1.0
-            
-        if 'trace_identification_code' not in renamed_df.columns:
-            renamed_df['trace_identification_code'] = 1
-            
-        self.headers = renamed_df
+        # Elevation Scalar (scalel)
+        if 'scalel' in df.columns:
+            # scalel applies to gelev, selev, sdepth, gdel, sdel, swdep, gwdep
+            elevs = ['gelev', 'selev', 'sdepth', 'gdel', 'sdel', 'swdep', 'gwdep']
+            for col in elevs:
+                if col in df.columns:
+                    df[col] = self._apply_scalar(df[col], df['scalel'])
 
     def _apply_scalar(self, series, scalar_series):
         """Apply SU scalar logic."""
@@ -382,7 +234,7 @@ class SUConverter:
         # Ensure only valid schema columns are written? Writer handles validation.
         # But we need to ensure we pass a DataFrame compatible with schema.
         # SUReader produces 'trace_sequence_number', 'sample_rate' etc.
-        writer.write_headers(self.headers)
+        writer.write_headers(self.headers, mapping=self.mapping)
         
         # Initialize Trace Data
         # We know total shape from _initial_trace_count and _ns
