@@ -20,12 +20,16 @@ dependencies = [
     "pyarrow",
     "pyyaml",
     "zarr",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest",
 ]
+
+[project.scripts]
+pyseis-view = "pyseis_io.visualization.viewer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
