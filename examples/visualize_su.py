@@ -42,6 +42,11 @@ def main():
         print("Note: Dataset will be deleted when viewer closes.")
         
         try:
+            # Handle SU -> SeisData mapping alias
+            if args.group_by == 'fldr' and 'fldr' not in df.columns and 'source_id' in df.columns:
+                 print("Note: 'fldr' mapped to 'source_id' in conversion. Grouping by 'source_id'.")
+                 args.group_by = 'source_id'
+                 
             SeismicViewer(seis_path, group_by=args.group_by)
         except Exception as e:
             print(f"Viewer Error: {e}")
