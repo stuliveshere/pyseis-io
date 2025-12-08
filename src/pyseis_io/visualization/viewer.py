@@ -12,13 +12,13 @@ class SeismicViewer:
     """
     A simple matplotlib-based viewer for SeismicData datasets.
     """
-    def __init__(self, dataset_path, group_by='fldr', show=True):
+    def __init__(self, dataset_path, group_by='source_id', show=True):
         """
         Initialize the viewer.
         
         Args:
             dataset_path (str): Path to the .seis dataset (Zarr/Parquet).
-            group_by (str): Header key to group constant gathers by (e.g. 'fldr', 'source_id', 'cdp').
+            group_by (str): Header key to group constant gathers by (e.g. 'fldr', 'source_id', 'cdp'). Default 'source_id'.
             show (bool): Whether to call plt.show() immediately (blocking). Default True.
         """
         self.dataset_path = Path(dataset_path)
@@ -31,7 +31,6 @@ class SeismicViewer:
         # Group headers
         print(f"Grouping traces by '{group_by}'...")
         if group_by not in self.sd.headers.columns:
-            # Fallback or error?
             avail = list(self.sd.headers.columns)
             raise ValueError(f"Header '{group_by}' not found. Available headers: {avail}")
             

@@ -14,7 +14,6 @@ from pyseis_io.visualization.viewer import SeismicViewer
 def main():
     parser = argparse.ArgumentParser(description="Visualize an SU file using PySeis-IO")
     parser.add_argument("su_file", help="Path to input .su file")
-    parser.add_argument("--group-by", "-g", default="fldr", help="Header key to group by (default: fldr)")
     
     args = parser.parse_args()
     
@@ -48,12 +47,7 @@ def main():
             print(sd.summary())
             sd.close() # Close to release for viewer (though viewer re-opens it)
             
-            # Handle SU -> SeisData mapping alias
-            if args.group_by == 'fldr' and 'fldr' not in df.columns and 'source_id' in df.columns:
-                 print("Note: 'fldr' mapped to 'source_id' in conversion. Grouping by 'source_id'.")
-                 args.group_by = 'source_id'
-                 
-            SeismicViewer(seis_path, group_by=args.group_by)
+            SeismicViewer(seis_path)
         except Exception as e:
             print(f"Viewer Error: {e}")
 
