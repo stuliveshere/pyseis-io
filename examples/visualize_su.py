@@ -42,6 +42,12 @@ def main():
         print("Note: Dataset will be deleted when viewer closes.")
         
         try:
+            # Load dataset to access summary
+            from pyseis_io.core.dataset import SeismicData
+            sd = SeismicData.open(seis_path)
+            print(sd.summary())
+            sd.close() # Close to release for viewer (though viewer re-opens it)
+            
             # Handle SU -> SeisData mapping alias
             if args.group_by == 'fldr' and 'fldr' not in df.columns and 'source_id' in df.columns:
                  print("Note: 'fldr' mapped to 'source_id' in conversion. Grouping by 'source_id'.")

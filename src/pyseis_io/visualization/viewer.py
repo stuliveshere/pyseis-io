@@ -117,7 +117,13 @@ class SeismicViewer:
         # Get sample rate and ns
         # self.sd.sample_rate is in microseconds
         ns = img_data.shape[0]
-        dt = getattr(self.sd, 'sample_rate', 4000.0) / 1_000_000.0
+        sr = getattr(self.sd, 'sample_rate', 0.004)
+        # Heuristic: if > 1, assume micros (legacy/default), else seconds
+        if sr > 1:
+            dt = sr / 1_000_000.0
+        else:
+            dt = sr
+            
         max_time = ns * dt
         
         self.ax.imshow(img_data, cmap='seismic', aspect='auto', vmin=-vm, vmax=vm,

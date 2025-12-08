@@ -231,3 +231,70 @@ class SeismicData:
         # Write metadata
         writer.write_metadata({'sample_rate': self.sample_rate})
 
+    def summary(self) -> str:
+        """
+        Return a textual summary of the dataset (dimensions, geometry, key ranges).
+        Similar to surange.
+        """
+        lines = []
+        lines.append(f"SeismicData Summary:")
+        lines.append(f"-------------------")
+        lines.append(f"Source: {self.file_path or 'Memory'}")
+        lines.append(f"Traces: {self.n_traces}")
+        lines.append(f"Samples: {self.n_samples}")
+        
+        # sample_rate is in seconds
+        us = self.sample_rate * 1_000_000.0
+        ms = self.sample_rate * 1_000.0
+        lines.append(f"Sample Rate: {us:.2f} us ({ms:.2f} ms)")
+        
+        duration = self.n_samples * self.sample_rate # seconds
+        lines.append(f"Length: {duration:.2f} s")
+        
+        # approximate size
+        size_bytes = self.n_traces * self.n_samples * 4 # float32
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024 or unit == 'GB':
+                lines.append(f"Raw Data Size: {size_bytes:.2f} {unit}")
+                break
+            size_bytes /= 1024.0
+            
+        lines.append("")
+        lines.append("Header Statistics:")
+        
+        # We need to read specific columns to get stats efficiently
+        # If dataset is huge, this might take a moment, but Parquet is fast.
+        # Key columns to check
+        keys = ['trace_id', 'source_id', 'source_index', 'fldr', 'cdp_id', 
+                'source_x', 'source_y', 'source_z',
+                'receiver_x', 'receiver_y', 'receiver_z',
+                'offset']
+        
+        # Available columns in parquet
+        # self.header_store.pq_file.schema.names
+        avail_cols = [c for c in keys if c in self.header_store.pq_file.schema.names]
+        
+        if not avail_cols:
+             lines.append("  No standard key headers found.")
+        else:
+             # Read only these columns
+             # Using header_store read_window for full range
+             # Ideally we'd use pyarrow's statistics if available, but simplest is to read columns 
+             # (parquet is columnar, so this is cheap-ish)
+             table = self.header_store.read_window(0, self.n_traces, columns=avail_cols)
+             df = table.to_pandas()
+             
+             for col in avail_cols:
+                 series = df[col]
+                 # Try to convert to numeric if possible for min/max
+                 try:
+                     # Check if it looks numeric
+                     numeric = pd.to_numeric(series, errors='ignore')
+                     min_val = numeric.min()
+                     max_val = numeric.max()
+                     lines.append(f"  {col:<15}: {min_val} to {max_val}")
+                 except:
+                     lines.append(f"  {col:<15}: (non-numeric)")
+
+        return "\n".join(lines)
+

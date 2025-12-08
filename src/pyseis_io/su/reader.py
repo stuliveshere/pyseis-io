@@ -354,9 +354,14 @@ class SUConverter:
         
         return out
 
-    def convert(self, output_path: Union[str, Path]):
+
+    def convert(self, output_path: Union[str, Path], chunk_size: int = 1000):
         """
         Convert the SU file to internal format using the (possibly modified) headers.
+        
+        Args:
+            output_path: Destination path for .seis dataset.
+            chunk_size: Number of traces to process at a time. Default 1000.
         """
         if self.headers is None:
             raise RuntimeError("Headers not loaded. Call scan() first.")
@@ -365,15 +370,6 @@ class SUConverter:
         if len(self.headers) != self._initial_trace_count:
              raise ValueError(f"Header count mismatch: Expected {self._initial_trace_count}, got {len(self.headers)}. Dropping traces is not supported.")
              
-        # Check index integrity (optional validation, assuming user didn't reset index)
-        if not self.headers.index.equals(pd.RangeIndex(self._initial_trace_count)):
-             # If index was specialized, we can't easily check order without a stable ID.
-             # But we can assume data is row-aligned.
-             # Warning if index is suspicious?
-             pass
-             
-        output_path = Path(output_path)
-        
         # Prepare Metadata
         # Use first trace sample rate
         sample_rate = self._dt / 1_000_000.0 # micros -> seconds
@@ -388,10 +384,18 @@ class SUConverter:
         # SUReader produces 'trace_sequence_number', 'sample_rate' etc.
         writer.write_headers(self.headers)
         
-        # Write Traces
-        # Iterate and write in chunks
-        chunk_size = 1000
+        # Initialize Trace Data
+        # We know total shape from _initial_trace_count and _ns
+        total_shape = (self._initial_trace_count, self._ns)
         
+        # Optimize chunking: Zarr chunks should be aligned with our write chunks if possible for speed
+        writer.initialize_data(
+            shape=total_shape,
+            chunks=(chunk_size, self._ns),
+            dtype=np.float32
+        )
+        
+        # Write Traces
         with open(self.su_path, 'rb') as f:
             for i in range(0, self._initial_trace_count, chunk_size):
                 count = min(chunk_size, self._initial_trace_count - i)
@@ -418,6 +422,6 @@ class SUConverter:
                         
                     traces[j, :] = trace_data
                     
-                writer.write_traces(traces)
+                writer.write_data_chunk(traces, start_trace=i)
                 
         print(f"Conversion complete: {output_path}")

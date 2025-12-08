@@ -40,21 +40,23 @@ class InternalFormatWriter:
                 
         self.layout = SeismicDatasetLayout.create(root_path)
         
-    def write_traces(
+    def initialize_data(
         self,
-        data: Union[np.ndarray, da.Array],
+        shape: tuple,
         chunks: Optional[tuple] = None,
+        dtype: Any = np.float32,
         compressor: Optional[str] = 'blosc',
         compression_level: int = 5
     ) -> None:
         """
-        Write trace data to Zarr array.
+        Initialize the Zarr array for trace data with a specific shape.
         
         Args:
-            data: Trace data array (n_traces, n_samples).
-            chunks: Chunk size for Zarr array. If None, uses automatic chunking.
-            compressor: Compression algorithm ('blosc', 'zstd', 'gzip', or None).
-            compression_level: Compression level (1-9).
+            shape: (n_traces, n_samples)
+            chunks: Chunk size.
+            dtype: Data type.
+            compressor: 'blosc', 'zstd', 'gzip', or None.
+            compression_level: 1-9.
         """
         # Set up compressor
         if compressor == 'blosc':
@@ -70,21 +72,75 @@ class InternalFormatWriter:
             comp = None
         else:
             raise ValueError(f"Unknown compressor: {compressor}")
-        
-        # Determine chunks
+
         if chunks is None:
-            # Default chunking: chunk by traces (e.g., 1000 traces at a time)
-            if isinstance(data, da.Array):
-                chunks = data.chunksize
-            else:
-                chunks = (min(1000, data.shape[0]), data.shape[1])
-        
-        # Write to Zarr
-        # Note: We now write to the 'data' group within traces.zarr
+            chunks = (min(1000, shape[0]), shape[1])
+
         traces_group_path = str(self.layout.traces_path)
+        root = zarr.open_group(traces_group_path, mode='a', zarr_version=2)
         
+        # Create dataset
+        root.create_dataset(
+            'data',
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            compressor=comp,
+            overwrite=True
+        )
+
+    def write_data_chunk(self, data: np.ndarray, start_trace: int) -> None:
+        """
+        Write a chunk of trace data to the initialized array.
+        
+        Args:
+            data: Numpy array of shape (n_chunk, n_samples).
+            start_trace: Index of the first trace in this chunk.
+        """
+        traces_group_path = str(self.layout.traces_path)
+        root = zarr.open_group(traces_group_path, mode='r+', zarr_version=2)
+        
+        if 'data' not in root:
+             raise RuntimeError("Data array not initialized. Call initialize_data() first.")
+             
+        z = root['data']
+        end_trace = start_trace + data.shape[0]
+        z[start_trace:end_trace, :] = data
+
+    def write_traces(
+        self,
+        data: Union[np.ndarray, da.Array],
+        chunks: Optional[tuple] = None,
+        compressor: Optional[str] = 'blosc',
+        compression_level: int = 5
+    ) -> None:
+        """
+        Write entire trace data to Zarr array (Overwrites existing).
+        
+        Args:
+            data: Trace data array (n_traces, n_samples).
+            chunks: Chunk size for Zarr array. If None, uses automatic chunking.
+            compressor: Compression algorithm ('blosc', 'zstd', 'gzip', or None).
+            compression_level: Compression level (1-9).
+        """
         if isinstance(data, da.Array):
-            # If already a dask array, save directly
+            # Dask handles writing efficiently
+            # Set up compressor
+            if compressor == 'blosc':
+                from numcodecs import Blosc
+                comp = Blosc(cname='zstd', clevel=compression_level)
+            elif compressor == 'zstd':
+                 from numcodecs import Zstd
+                 comp = Zstd(level=compression_level)
+            elif compressor == 'gzip':
+                from numcodecs import GZip
+                comp = GZip(level=compression_level)
+            elif compressor is None:
+                comp = None
+            else:
+                raise ValueError(f"Unknown compressor: {compressor}")
+
+            traces_group_path = str(self.layout.traces_path)
             data.to_zarr(
                 traces_group_path,
                 component='data',
@@ -93,18 +149,17 @@ class InternalFormatWriter:
                 zarr_version=2
             )
         else:
-            # Convert numpy array to Zarr using open_array
-            # We open the group first, then create the array
-            root = zarr.open_group(traces_group_path, mode='a', zarr_version=2)
-            z = root.create_dataset(
-                'data',
-                shape=data.shape,
-                chunks=chunks,
-                dtype=data.dtype,
-                compressor=comp,
-                overwrite=True
+            # For numpy, use initialize + write_chunk logic implicitly
+            # to reuse code, but here we just do it in one go which is what
+            # write_traces implies (writes the whole thing).
+            self.initialize_data(
+                shape=data.shape, 
+                chunks=chunks, 
+                dtype=data.dtype, 
+                compressor=compressor, 
+                compression_level=compression_level
             )
-            z[:] = data
+            self.write_data_chunk(data, 0)
     
     def write_metadata(self, metadata: Dict[str, Any]) -> None:
         """

@@ -151,3 +151,49 @@ def test_endian_detection(tmp_path):
     converter_le = SUConverter(su_path_le)
     converter_le.scan()
     assert converter_le._endian == '<'
+
+def test_su_chunked_conversion(tmp_path, synthetic_data):
+    """Test SU conversion with small chunks to force multiple loops."""
+    su_file = tmp_path / "test_chunked.su"
+    seis_path = tmp_path / "test_chunked.seis"
+    
+    # Write synthetic SU file
+    writer = SUWriter(synthetic_data)
+    writer.export(su_file)
+    
+    # Convert with small chunk size (e.g. 2 traces per chunk)
+    converter = SUConverter(su_file)
+    converter.scan()
+    converter.convert(seis_path, chunk_size=2)
+    
+    # Verify
+    sd = SeismicData.open(seis_path)
+    assert sd.n_traces == 10
+    # Data check
+    # synthetic_data is SeismicData object or dict? 
+    # In other tests: `sd_original = SeismicData.open(synthetic_data)` implies synthetic_data is a PATH fixture.
+    # Ah, `synthetic_data` fixture from `conftest` usually returns a PATH if implemented standardly.
+    # Let's check `test_su_roundtrip`: `sd_original = SeismicData.open(synthetic_data)`
+    # So `synthetic_data` is a path to a .seis dataset.
+    
+    sd_orig = SeismicData.open(synthetic_data)
+    np.testing.assert_allclose(sd.data[:].compute(), sd_orig.data[:].compute(), rtol=1e-5)
+    sd.close()
+
+def test_seismic_data_summary(tmp_path, synthetic_data):
+    """Test the summary method."""
+    seis_path = tmp_path / "test_summary.seis"
+    
+    # Create dataset manually or just use synthetic_data directly?
+    # synthetic_data path works.
+    sd = SeismicData.open(synthetic_data)
+    summary = sd.summary()
+    print(summary)
+    
+    assert "SeismicData Summary:" in summary
+    assert "Traces: 10" in summary
+    # Sample rate from fixture? Default usually 4000us (0.004s).
+    # Since we fixed units convention, it should say 4000.00 us.
+    assert "us" in summary
+    
+    sd.close()
