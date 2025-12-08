@@ -299,7 +299,10 @@ class SeismicData:
                 series = df[col]
                 try:
                     # Convert to numeric if possible (handles string-encoded numbers)
-                    numeric = pd.to_numeric(series, errors='ignore')
+                    try:
+                        numeric = pd.to_numeric(series)
+                    except (ValueError, TypeError):
+                        numeric = series
                     
                     if pd.api.types.is_numeric_dtype(numeric):
                         min_val = numeric.min()
