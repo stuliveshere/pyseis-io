@@ -8,7 +8,7 @@ import shutil
 # Ensure pyseis_io is in path if running from source root
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pyseis_io.su.reader import SUConverter
+from pyseis_io.su.importer import SUImporter
 from pyseis_io.visualization.viewer import SeismicViewer
 
 def main():
@@ -30,12 +30,12 @@ def main():
         seis_path = temp_dir_path / "converted.seis"
         
         print("Scanning SU file...")
-        converter = SUConverter(su_path)
-        df = converter.scan()
+        importer = SUImporter(su_path)
+        df = importer.scan()
         print(f"Scanned {len(df)} traces.")
         
         print(f"Converting to internal format at {seis_path}...")
-        sd = converter.convert(seis_path)
+        sd = importer.import_data(seis_path)
         
         print("Launching viewer...")
         print("Note: Dataset will be deleted when viewer closes.")
