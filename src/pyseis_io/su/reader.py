@@ -75,7 +75,92 @@ class SUConverter:
         self._initial_trace_count = 0
         self._trace_stride = 0
 
-    # ... _detect_endianness and _get_fmt_char ...
+    def _detect_endianness(self, f) -> str:
+        """
+        Detect endianness by checking ns and dt sanity.
+        """
+        # Read first 240 bytes
+        f.seek(0)
+        header_bytes = f.read(240)
+        if len(header_bytes) < 240:
+             raise ValueError("File too short for header")
+             
+        # Definition for ns and dt
+        ns_def = self.su_headers.get('ns')
+        dt_def = self.su_headers.get('dt')
+        
+        if not ns_def or not dt_def:
+             raise ValueError("ns and dt must be defined in header definition")
+             
+        # Helper to read value
+        def read_val(bytes_data, def_, endian):
+             start = def_['start_byte']
+             n_bytes = def_['num_bytes']
+             fmt = self._get_fmt_char(def_['format'], n_bytes)
+             return struct.unpack(f'{endian}{fmt}', bytes_data[start:start+n_bytes])[0]
+             
+        # Check Little Endian
+        ns_le = read_val(header_bytes, ns_def, '<')
+        dt_le = read_val(header_bytes, dt_def, '<')
+        
+        # Check Big Endian
+        ns_be = read_val(header_bytes, ns_def, '>')
+        dt_be = read_val(header_bytes, dt_def, '>')
+        
+        # Heuristics
+        # ns should be positive and reasonable (e.g. < 100,000)
+        # dt is usually in microseconds (e.g. 1000, 2000, 4000)
+        
+        is_le_valid = 0 < ns_le < 100000 and 0 <= dt_le < 1000000
+        is_be_valid = 0 < ns_be < 100000 and 0 <= dt_be < 1000000
+        
+        # refinement using file size
+        file_size = self.su_path.stat().st_size
+        if is_le_valid:
+            stride_le = 240 + ns_le * 4
+            if file_size % stride_le != 0 and file_size > stride_le: 
+                 pass
+        
+        if is_le_valid and is_be_valid:
+             # Check consistency
+             stride_le = 240 + ns_le * 4
+             stride_be = 240 + ns_be * 4
+             
+             consistent_le = (file_size % stride_le == 0)
+             consistent_be = (file_size % stride_be == 0)
+             
+             if consistent_le and not consistent_be:
+                 return '<'
+             if consistent_be and not consistent_le:
+                 return '>'
+                 
+             # Still ambiguous? Default to LE with warning.
+             print("Warning: Endianness ambiguous (both valid and size-consistent), defaulting to Little Endian.")
+             return '<'
+
+        if is_le_valid and not is_be_valid:
+             return '<'
+        if is_be_valid and not is_le_valid:
+             return '>'
+             
+        raise ValueError("Could not detect valid endianness.")
+
+    def _get_fmt_char(self, fmt_type, n_bytes):
+        """Map SU format/bytes to struct format character."""
+        if fmt_type == 'uint':
+            if n_bytes == 2: return 'H'
+            if n_bytes == 4: return 'I'
+        elif fmt_type == 'int':
+            if n_bytes == 2: return 'h'
+            if n_bytes == 4: return 'i'
+        elif fmt_type == 'float':
+            if n_bytes == 4: return 'f'
+            if n_bytes == 8: return 'd'
+        
+        # Fallback
+        if n_bytes == 2: return 'h'
+        if n_bytes == 4: return 'i'
+        return 'i' # Default
 
     def scan(self) -> pd.DataFrame:
         """
