@@ -96,7 +96,7 @@ class SeismicData:
         self.data = data
         self.header_store = header_store
         self.sample_rate = sample_rate
-        self.file_path = file_path
+        self.file_path = Path(file_path) if file_path else None
         
         # Internal state to track the current view window
         # If None, represents the full dataset
@@ -113,22 +113,50 @@ class SeismicData:
     @property
     def headers(self) -> pd.DataFrame:
         """
-        Materialize the headers for the current view as an Arrow-backed Pandas DataFrame.
+        Materialize the full headers (Trace + Source + Receiver) as a Pandas DataFrame.
+        Perform automatic Left Join on source_id and receiver_id.
         """
+        # 1. Read Trace Headers (Windowed)
         start, stop, step = self._trace_slice.indices(len(self.header_store))
-        
-        # Read the window from Parquet
-        # Note: Parquet reading doesn't support step, so we read the range and then slice in memory if needed
         table = self.header_store.read_window(start, stop)
-        
-        # Convert to Pandas with Arrow backend for efficiency
-        df = table.to_pandas(types_mapper=pd.ArrowDtype)
-        
-        # Apply step if needed
+        trace_df = table.to_pandas(types_mapper=pd.ArrowDtype)
         if step != 1:
-            df = df.iloc[::step]
+            trace_df = trace_df.iloc[::step]
             
-        return df
+        # 2. Join Source Attributes
+        if 'source_id' in trace_df.columns and self.source_headers is not None:
+             # Merge left
+             trace_df = pd.merge(trace_df, self.source_headers, on='source_id', how='left', suffixes=('', '_dup'))
+             
+        # 3. Join Receiver Attributes
+        if 'receiver_id' in trace_df.columns and self.receiver_headers is not None:
+             trace_df = pd.merge(trace_df, self.receiver_headers, on='receiver_id', how='left', suffixes=('', '_dup'))
+             
+        # Clean up duplicates if any (though logic shouldn't produce them if schemas disjoint)
+        # Suffixes handles collisions.
+             
+        return trace_df
+
+    @property
+    def source_headers(self) -> Optional[pd.DataFrame]:
+        """
+        Access the normalized Source table.
+        """
+        path = self.file_path / "source.parquet" if self.file_path else None
+        if path and path.exists():
+            # todo: caching?
+            return pd.read_parquet(path)
+        return None
+
+    @property
+    def receiver_headers(self) -> Optional[pd.DataFrame]:
+        """
+        Access the normalized Receiver table.
+        """
+        path = self.file_path / "receiver.parquet" if self.file_path else None
+        if path and path.exists():
+            return pd.read_parquet(path)
+        return None
 
     def __getitem__(self, key: Union[int, slice]) -> 'SeismicData':
         """
@@ -234,7 +262,7 @@ class SeismicData:
     def summary(self) -> str:
         """
         Return a textual summary of the dataset (dimensions, geometry, key ranges).
-        Similar to surange.
+        Summarizes trace.parquet, source.parquet, and receiver.parquet if available.
         """
         lines = []
         lines.append(f"SeismicData Summary:")
@@ -258,43 +286,52 @@ class SeismicData:
                 lines.append(f"Raw Data Size: {size_bytes:.2f} {unit}")
                 break
             size_bytes /= 1024.0
+
+        def _append_stats(df: pd.DataFrame, table_name: str):
+            lines.append("")
+            lines.append(f"{table_name} Statistics ({len(df)} rows):")
             
-        lines.append("")
-        lines.append("Header Statistics:")
+            if df.empty:
+                lines.append("  (empty)")
+                return
+
+            for col in df.columns:
+                series = df[col]
+                try:
+                    # Convert to numeric if possible (handles string-encoded numbers)
+                    numeric = pd.to_numeric(series, errors='ignore')
+                    
+                    if pd.api.types.is_numeric_dtype(numeric):
+                        min_val = numeric.min()
+                        max_val = numeric.max()
+                        if pd.api.types.is_float_dtype(numeric):
+                             lines.append(f"  {col:<20}: {min_val:.2f} to {max_val:.2f}")
+                        else:
+                             lines.append(f"  {col:<20}: {min_val} to {max_val}")
+                    else:
+                        # Non-numeric
+                        n_unique = series.nunique()
+                        if n_unique < 5:
+                            vals = ", ".join(map(str, series.unique()))
+                            lines.append(f"  {col:<20}: {vals}")
+                        else:
+                            lines.append(f"  {col:<20}: {n_unique} unique values")
+                except Exception:
+                    lines.append(f"  {col:<20}: (error)")
+
+        # 1. Trace Headers (trace.parquet)
+        # Read all columns
+        trace_table = self.header_store.read_window(0, self.n_traces)
+        trace_df = trace_table.to_pandas()
+        _append_stats(trace_df, "Trace Headers (trace.parquet)")
         
-        # We need to read specific columns to get stats efficiently
-        # If dataset is huge, this might take a moment, but Parquet is fast.
-        # Key columns to check
-        keys = ['trace_id', 'source_id', 'source_index', 'fldr', 'cdp_id', 
-                'source_x', 'source_y', 'source_z',
-                'receiver_x', 'receiver_y', 'receiver_z',
-                'offset']
-        
-        # Available columns in parquet
-        # self.header_store.pq_file.schema.names
-        avail_cols = [c for c in keys if c in self.header_store.pq_file.schema.names]
-        
-        if not avail_cols:
-             lines.append("  No standard key headers found.")
-        else:
-             # Read only these columns
-             # Using header_store read_window for full range
-             # Ideally we'd use pyarrow's statistics if available, but simplest is to read columns 
-             # (parquet is columnar, so this is cheap-ish)
-             table = self.header_store.read_window(0, self.n_traces, columns=avail_cols)
-             df = table.to_pandas()
-             
-             for col in avail_cols:
-                 series = df[col]
-                 # Try to convert to numeric if possible for min/max
-                 try:
-                     # Check if it looks numeric
-                     numeric = pd.to_numeric(series, errors='ignore')
-                     min_val = numeric.min()
-                     max_val = numeric.max()
-                     lines.append(f"  {col:<15}: {min_val} to {max_val}")
-                 except:
-                     lines.append(f"  {col:<15}: (non-numeric)")
+        # 2. Source Headers (source.parquet)
+        if self.source_headers is not None:
+            _append_stats(self.source_headers, "Source Attributes (source.parquet)")
+            
+        # 3. Receiver Headers (receiver.parquet)
+        if self.receiver_headers is not None:
+            _append_stats(self.receiver_headers, "Receiver Attributes (receiver.parquet)")
 
         return "\n".join(lines)
 

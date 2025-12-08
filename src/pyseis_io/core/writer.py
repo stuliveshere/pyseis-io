@@ -205,39 +205,131 @@ class InternalFormatWriter:
         with open(self.layout.provenance_path, 'w') as f:
             yaml.dump(provenance, f)
 
-    def write_headers(
-        self,
-        trace_headers: pd.DataFrame,
-        source_headers: Optional[pd.DataFrame] = None,
-        receiver_headers: Optional[pd.DataFrame] = None
-    ) -> None:
+    def write_headers(self, trace_headers: pd.DataFrame) -> None:
         """
-        Write headers to Parquet files.
+        Write headers with strict normalization to Source, Receiver, and Trace tables.
         
         Args:
-            trace_headers: DataFrame containing trace attributes.
-            source_headers: Optional DataFrame containing source attributes.
-            receiver_headers: Optional DataFrame containing receiver attributes.
-        """
-        # Validate headers against schemas (Issue #62)
-        from .schema import SchemaManager
-        manager = SchemaManager(self.layout.root_path)
-        
-        manager.validate_dataframe(trace_headers, "trace_header")
-        manager.validate_dataframe(source_headers, "source")
-        manager.validate_dataframe(receiver_headers, "receiver")
-        
-        # Write trace headers
-        trace_headers.to_parquet(self.layout.trace_metadata_path)
-        
-        # Write source headers
-        if source_headers is not None:
-            source_headers.to_parquet(self.layout.source_metadata_path)
+            trace_headers: Flat DataFrame containing all headers.
             
-        # Write receiver headers
-        if receiver_headers is not None:
-            receiver_headers.to_parquet(self.layout.receiver_metadata_path)
-    
+        Raises:
+            ValueError: If source_id or receiver_id validation fails.
+        """
+        # Ensure SchemaManager is available
+        from .schema import SchemaManager
+        schema_mgr = SchemaManager(self.layout.root_path)
+        
+        # 1. Normalize and Write Source Table
+        self._normalize_and_write_table(
+            df=trace_headers,
+            schema_name='source',
+            id_col='source_id',
+            schema_mgr=schema_mgr
+        )
+        
+        # 2. Normalize and Write Receiver Table
+        self._normalize_and_write_table(
+            df=trace_headers,
+            schema_name='receiver',
+            id_col='receiver_id',
+            schema_mgr=schema_mgr
+        )
+        
+        # 3. Write Remaining Trace Headers
+        self._write_trace_headers(trace_headers, schema_mgr)
+
+    def _normalize_and_write_table(
+        self, 
+        df: pd.DataFrame, 
+        schema_name: str, 
+        id_col: str, 
+        schema_mgr: Any
+    ) -> None:
+        """
+        Extract, validate, and write a normalized table (Source or Receiver).
+        """
+        # Load schema definition
+        # SchemaManager.install() puts schemas in .seis/schema/[name]/v1.0.yaml
+        
+        schema_base_dir = self.layout.schema_dir
+        if not schema_base_dir.exists():
+            schema_mgr.install()
+            
+        # Get columns for this schema
+        import yaml
+        schema_path = schema_base_dir / schema_name / 'v1.0.yaml'
+        if not schema_path.exists():
+            # If still missing, implies schema template issue or manual corruption
+            # We can't normalize without schema. skip?
+            # User wants strictness.
+            raise FileNotFoundError(f"Schema {schema_name} not found at {schema_path}.")
+            
+        with open(schema_path, 'r') as f:
+            schema_def = yaml.safe_load(f)
+            
+        schema_cols = list(schema_def.get('columns', {}).keys())
+        
+        # Identify columns present in DataFrame
+        # Intersection
+        present_cols = [c for c in schema_cols if c in df.columns]
+        
+        # Must include ID col
+        if id_col not in present_cols:
+             if id_col not in df.columns:
+                 # If ID is missing entirely from input...
+                 if not present_cols:
+                     return # Nothing to normalize (empty intersection)
+                 raise ValueError(f"Input DataFrame missing required '{id_col}' for {schema_name} normalization.")
+             present_cols.append(id_col)
+             present_cols = list(set(present_cols))
+             
+        # Extract and Dedup
+        table_df = df[present_cols].drop_duplicates()
+        
+        # Validation: Check ID uniqueness
+        if not table_df[id_col].is_unique:
+            duplicates = table_df[table_df.duplicated(id_col, keep=False)]
+            msg = f"{schema_name.capitalize()} ID conflict detected. The following IDs have multiple attribute sets:\n"
+            msg += str(duplicates.sort_values(id_col).head(10))
+            raise ValueError(msg)
+            
+        # Write to Parquet
+        if schema_name == 'source':
+            out_path = self.layout.source_metadata_path
+        elif schema_name == 'receiver':
+            out_path = self.layout.receiver_metadata_path
+        else:
+            out_path = self.layout.root_path / f"{schema_name}.parquet"
+            
+        table_df.to_parquet(out_path, index=False)
+
+    def _write_trace_headers(self, df: pd.DataFrame, schema_mgr: Any) -> None:
+        """
+        Write the remaining trace headers (preserving foreign keys).
+        """
+        import yaml
+        # Determine columns to KEEP
+        exclude_cols = set()
+        for name in ['source', 'receiver']:
+            schema_path = self.layout.schema_dir / name / 'v1.0.yaml'
+            if schema_path.exists():
+                with open(schema_path, 'r') as f:
+                    s = yaml.safe_load(f)
+                    exclude_cols.update(s.get('columns', {}).keys())
+        
+        # Keep IDs
+        exclude_cols.discard('source_id')
+        exclude_cols.discard('receiver_id')
+        
+        # Calculate trace columns
+        trace_cols = [c for c in df.columns if c not in exclude_cols or c in ['source_id', 'receiver_id']]
+        
+        trace_df = df[trace_cols]
+        
+        # Write to parquet
+        out_path = self.layout.trace_metadata_path
+        trace_df.to_parquet(out_path, index=False)
+
     def write_metadata_files(
         self,
         signature: Optional[pd.DataFrame] = None,
@@ -281,4 +373,3 @@ class InternalFormatWriter:
         if job is not None:
             with open(self.layout.job_metadata_path, 'w') as f:
                 yaml.dump(job, f, sort_keys=False)
-
