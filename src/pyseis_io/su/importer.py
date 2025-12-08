@@ -6,9 +6,9 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, Tuple
 
-
 from pyseis_io.core.writer import InternalFormatWriter
 from pyseis_io.base import SeismicImporter
+from pyseis_io.core.format_parser import FormatParser
 
 # Mapping SU headers to SeisData schema
 # Key: SU header name (from su.yaml) -> Value: SeisData column name
@@ -25,9 +25,9 @@ class SUImporter(SeismicImporter):
         Args:
             path: Path to the SU file.
             header_def: Optional path to a YAML file defining the SU header structure.
-                        Defaults to src/pyseis_io/su/su.yaml.
+                        Defaults to src/pyseis_io/su/su_format.yaml.
             mapping_path: Optional path to a YAML file defining SU->Core mapping.
-                          Defaults to src/pyseis_io/su/mapping.yaml.
+                          Defaults to src/pyseis_io/su/header_mapping.yaml.
         """
         self.su_path = Path(path)
         if not self.su_path.exists():
@@ -37,7 +37,7 @@ class SUImporter(SeismicImporter):
         if header_def:
             self.header_def_path = Path(header_def)
         else:
-            self.header_def_path = Path(__file__).parent / "su.yaml"
+            self.header_def_path = Path(__file__).parent / "su_format.yaml"
             
         if not self.header_def_path.exists():
              raise FileNotFoundError(f"Header definition file not found: {self.header_def_path}")
@@ -45,16 +45,22 @@ class SUImporter(SeismicImporter):
         with open(self.header_def_path, 'r') as f:
             self.header_def = yaml.safe_load(f)
             
-        if 'SU_TRACE_HEADER' not in self.header_def or 'definition' not in self.header_def['SU_TRACE_HEADER']:
-             raise ValueError("Invalid header definition format.")
+        if 'trace_header' not in self.header_def:
+             raise ValueError("Invalid header definition format: missing 'trace_header'")
              
-        self.su_headers = self.header_def['SU_TRACE_HEADER']['definition']
+        # Extract fields, skipping metadata
+        self.su_headers = {
+            k: v for k, v in self.header_def['trace_header'].items() 
+            if k not in ['block_label', 'block_offset', 'block_size']
+        }
+        
+        self._header_size = self.header_def['trace_header'].get('block_size', 240)
         
         # Load Mapping
         if mapping_path:
              self.mapping_path = Path(mapping_path)
         else:
-             self.mapping_path = Path(__file__).parent / "mapping.yaml"
+             self.mapping_path = Path(__file__).parent / "header_mapping.yaml"
              
         if not self.mapping_path.exists():
              raise FileNotFoundError(f"Mapping file not found: {self.mapping_path}")
@@ -70,29 +76,34 @@ class SUImporter(SeismicImporter):
         self.headers: Optional[pd.DataFrame] = None
         self._initial_trace_count = 0
         self._trace_stride = 0
+        self.parser: Optional[FormatParser] = None
 
     def _detect_endianness(self, f) -> str:
         """
         Detect endianness by checking ns and dt sanity.
         """
-        # Read first 240 bytes
+        # Read first header
         f.seek(0)
-        header_bytes = f.read(240)
-        if len(header_bytes) < 240:
+        header_bytes = f.read(self._header_size)
+        if len(header_bytes) < self._header_size:
              raise ValueError("File too short for header")
              
         # Definition for ns and dt
-        ns_def = self.su_headers.get('ns')
-        dt_def = self.su_headers.get('dt')
+        # Helper to extract using simple offsets for detection
+        # We assume ns/dt are standard simple integers
+        
+        defs = self.header_def['trace_header']
+        ns_def = defs.get('ns')
+        dt_def = defs.get('dt')
         
         if not ns_def or not dt_def:
              raise ValueError("ns and dt must be defined in header definition")
              
         # Helper to read value
         def read_val(bytes_data, def_, endian):
-             start = def_['start_byte']
-             n_bytes = def_['num_bytes']
-             fmt = self._get_fmt_char(def_['format'], n_bytes)
+             start = def_['offset']
+             n_bytes = int(def_['size']) # Ensure int for slicing
+             fmt = self._get_fmt_char(def_['type'], n_bytes)
              return struct.unpack(f'{endian}{fmt}', bytes_data[start:start+n_bytes])[0]
              
         # Check Little Endian
@@ -104,40 +115,25 @@ class SUImporter(SeismicImporter):
         dt_be = read_val(header_bytes, dt_def, '>')
         
         # Heuristics
-        # ns should be positive and reasonable (e.g. < 100,000)
-        # dt is usually in microseconds (e.g. 1000, 2000, 4000)
-        
         is_le_valid = 0 < ns_le < 100000 and 0 <= dt_le < 1000000
         is_be_valid = 0 < ns_be < 100000 and 0 <= dt_be < 1000000
         
         # refinement using file size
         file_size = self.su_path.stat().st_size
-        if is_le_valid:
-            stride_le = 240 + ns_le * 4
-            if file_size % stride_le != 0 and file_size > stride_le: 
-                 pass
         
         if is_le_valid and is_be_valid:
-             # Check consistency
-             stride_le = 240 + ns_le * 4
-             stride_be = 240 + ns_be * 4
-             
+             stride_le = self._header_size + ns_le * 4
+             stride_be = self._header_size + ns_be * 4
              consistent_le = (file_size % stride_le == 0)
              consistent_be = (file_size % stride_be == 0)
              
-             if consistent_le and not consistent_be:
-                 return '<'
-             if consistent_be and not consistent_le:
-                 return '>'
-                 
-             # Still ambiguous? Default to LE with warning.
-             print("Warning: Endianness ambiguous (both valid and size-consistent), defaulting to Little Endian.")
+             if consistent_le and not consistent_be: return '<'
+             if consistent_be and not consistent_le: return '>'
+             print("Warning: Endianness ambiguous, defaulting to Little Endian.")
              return '<'
 
-        if is_le_valid and not is_be_valid:
-             return '<'
-        if is_be_valid and not is_le_valid:
-             return '>'
+        if is_le_valid: return '<'
+        if is_be_valid: return '>'
              
         raise ValueError("Could not detect valid endianness.")
 
@@ -170,23 +166,28 @@ class SUImporter(SeismicImporter):
             # 1. Detect Endianness & Geometry
             self._endian = self._detect_endianness(f)
             
-            # Read first header to get ns for stride
+            # Initialize Parser
+            self.parser = FormatParser(self.header_def['trace_header'], endian=self._endian)
+            
+            # Read first header to get ns for stride (using parser logic implies reading via dtype, but stride calc needs it first)
+            # Re-read basics manually for stride calc or use parser on small buffer
             f.seek(0)
-            header_bytes = f.read(240)
-            ns_def = self.su_headers['ns']
-            dt_def = self.su_headers['dt']
+            header_bytes = f.read(self._header_size)
             
-            start_ns = ns_def['start_byte']
-            fmt_ns = self._get_fmt_char(ns_def['format'], ns_def['num_bytes'])
-            self._ns = struct.unpack(f'{self._endian}{fmt_ns}', header_bytes[start_ns:start_ns+ns_def['num_bytes']])[0]
+            # we can use the same manual extract for ns/dt as they are needed for stride
+            ns_def = self.header_def['trace_header']['ns']
+            dt_def = self.header_def['trace_header']['dt']
             
-            start_dt = dt_def['start_byte']
-            fmt_dt = self._get_fmt_char(dt_def['format'], dt_def['num_bytes'])
-            self._dt = struct.unpack(f'{self._endian}{fmt_dt}', header_bytes[start_dt:start_dt+dt_def['num_bytes']])[0]
+            start_ns = ns_def['offset']
+            fmt_ns = self._get_fmt_char(ns_def['type'], ns_def['size'])
+            self._ns = struct.unpack(f'{self._endian}{fmt_ns}', header_bytes[start_ns:start_ns+int(ns_def['size'])])[0]
+            
+            start_dt = dt_def['offset']
+            fmt_dt = self._get_fmt_char(dt_def['type'], dt_def['size'])
+            self._dt = struct.unpack(f'{self._endian}{fmt_dt}', header_bytes[start_dt:start_dt+int(dt_def['size'])])[0]
             
             # Calculate stride
-            # Header (240) + Data (ns * 4 bytes for float32)
-            self._trace_stride = 240 + self._ns * 4
+            self._trace_stride = self._header_size + self._ns * 4
             
             # Calculate number of traces
             if self._file_size % self._trace_stride != 0:
@@ -194,54 +195,41 @@ class SUImporter(SeismicImporter):
             
             self._initial_trace_count = self._file_size // self._trace_stride
             
-            # 2. Memory Map & Stride Tricks
+            # 2. Build Read Dtype
+            read_dtype = self.parser.build_read_dtype(fixed_size=self._header_size)
+            
+            # 3. Read Headers via Memory Map & Stride Tricks or simple memmap with offset
+            # Using stride tricks allows skipping data blocks
             mmap = np.memmap(self.su_path, dtype='uint8', mode='r')
             cutoff = self._initial_trace_count * self._trace_stride
             if cutoff > len(mmap):
                  mmap = mmap[:cutoff]
             
-            headers_view = np.lib.stride_tricks.as_strided(
-                mmap, 
-                shape=(self._initial_trace_count, 240), 
-                strides=(self._trace_stride, 1)
+            # We want to view the 'header' part of every stride as a structured array record
+            full_dtype = np.dtype([
+                ('header', read_dtype),
+                ('data', f'V{self._ns * 4}')
+            ])
+            
+            # Use memmap with structured dtype
+            data_array = np.memmap(
+                self.su_path,
+                dtype=full_dtype,
+                mode='r',
+                shape=(self._initial_trace_count,)
             )
+
+            # Extract header part
+            headers_struct = data_array['header']
             
-            # 3. Extract Columns
-            data_dict = {}
-            for key, def_ in self.su_headers.items():
-                start = def_['start_byte']
-                n_bytes = def_['num_bytes']
-                fmt = def_['format']
-                
-                col_view = headers_view[:, start:start+n_bytes]
-                
-                np_dtype = None
-                if fmt in ['int', 'uint']:
-                    if n_bytes == 2: np_dtype = np.int16 if fmt=='int' else np.uint16
-                    elif n_bytes == 4: np_dtype = np.int32 if fmt=='int' else np.uint32
-                elif fmt == 'float':
-                    if n_bytes == 4: np_dtype = np.float32
-                    elif n_bytes == 8: np_dtype = np.float64
-                
-                if np_dtype:
-                    col_array = np.ndarray(
-                        shape=(self._initial_trace_count,),
-                        dtype=np_dtype,
-                        buffer=mmap,
-                        offset=start,
-                        strides=(self._trace_stride,)
-                    )
-                    
-                    sys_endian = '<' if np.little_endian else '>'
-                    if self._endian != sys_endian:
-                        data_dict[key] = col_array.byteswap()
-                    else:
-                        data_dict[key] = col_array.copy()
-                
-            # Create DataFrame
-            self.headers = pd.DataFrame(data_dict)
+            # Convert to DataFrame
+            # structured array to dataframe is zero-copy usually or efficient
+            self.headers = pd.DataFrame(headers_struct)
             
-            # 4. Scale (Apply SU-specific scaling BEFORE mapping)
+            # 4. Post Processing
+            self.headers = self.parser.process_dataframe(self.headers)
+            
+            # 5. Scale (Apply SU-specific scaling)
             self._apply_scalars_raw()
             
             return self.headers
@@ -340,7 +328,7 @@ class SUImporter(SeismicImporter):
                 for j in range(count):
                     trace_idx = i + j
                     # Calculate offset
-                    offset = trace_idx * self._trace_stride + 240 # Skip header
+                    offset = trace_idx * self._trace_stride + self._header_size # Skip header
                     
                     f.seek(offset)
                     data_bytes = f.read(self._ns * 4)
@@ -362,4 +350,3 @@ class SUImporter(SeismicImporter):
         # Return opened dataset
         from pyseis_io.core.dataset import SeismicData
         return SeismicData.open(output_path)
-
