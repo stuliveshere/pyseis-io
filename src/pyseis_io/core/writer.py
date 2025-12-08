@@ -249,6 +249,12 @@ class InternalFormatWriter:
         # 0. Extract Globals
         self._extract_and_write_globals(df)
         
+        # 0.5 Generate Internal IDs (Source and Receiver)
+        # This ensures we define unique sources/receivers based on their attributes
+        # and assign a consistent internal ID (row number of the deduped table).
+        df = self._generate_internal_id(df, 'source', 'source_id', schema_mgr)
+        df = self._generate_internal_id(df, 'receiver', 'receiver_id', schema_mgr)
+        
         # 1. Normalize and Write Source Table
         self._normalize_and_write_table(
             df=df,
@@ -267,6 +273,49 @@ class InternalFormatWriter:
         
         # 3. Write Remaining Trace Headers
         self._write_trace_headers(df, schema_mgr)
+
+    def _generate_internal_id(self, df: pd.DataFrame, schema_name: str, id_col: str, schema_mgr: Any) -> pd.DataFrame:
+        """
+        Generate an internal ID column by grouping on all attributes belonging to a schema.
+        """
+        import yaml
+        
+        # Load schema definition
+        schema_base_dir = self.layout.schema_dir
+        if not schema_base_dir.exists():
+            schema_mgr.install()
+            
+        schema_path = schema_base_dir / schema_name / 'v1.0.yaml'
+        if not schema_path.exists():
+             raise FileNotFoundError(f"Schema {schema_name} not found at {schema_path}.")
+             
+        with open(schema_path, 'r') as f:
+            schema_def = yaml.safe_load(f)
+            
+        schema_cols = list(schema_def.get('columns', {}).keys())
+        
+        # Identify columns present in DataFrame (excluding valid ID if it coincidentally exists)
+        # Actually, we want to OVERWRITE any existing ID that collides with our internal naming.
+        # But if the user provided 'source_id' thinking it's the key, we've decided to ignore it 
+        # favour of internal generation.
+        
+        # Filter schema columns that are in DF
+        present_cols = [c for c in schema_cols if c in df.columns and c != id_col]
+        
+        if not present_cols:
+            # No attributes found for this entity.
+            # Assign a single default ID '0' to all traces.
+            df[id_col] = '0'
+        else:
+            # Group by all attributes to find unique entities
+            # element-wise group number is the new ID.
+            # use dropna=False to treat NaN as a distinct value (e.g. missing coordinates but distinct field record)
+            # sort=False for performance and to keep potential order? 
+            # Actually, ngroup order is somewhat arbitrary if sort=False? 
+            # "orders by first appearance" if sort=False. This is good. Data order preservation.
+            df[id_col] = df.groupby(present_cols, dropna=False, sort=False).ngroup().astype(str)
+            
+        return df
 
     def _extract_and_write_globals(self, df: pd.DataFrame) -> None:
         """

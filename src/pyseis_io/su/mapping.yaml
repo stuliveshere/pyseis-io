@@ -21,7 +21,7 @@ scalco: coordinate_scalar
 scalel: elevation_scalar
 
 # Source related
-fldr: source_id
+fldr: file_number
 ep: source_index
 sx: source_x
 sy: source_y
