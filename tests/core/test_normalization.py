@@ -129,3 +129,47 @@ def test_summary_output(tmp_path):
     assert "offset" in s
     
     sd.close()
+
+def test_metadata_extraction(tmp_path):
+    """Test that constant globals are moved to metadata.json."""
+    seis_path = tmp_path / "meta_extract.seis"
+    
+    data = {
+        'trace_id': [1, 2],
+        'source_id': ['S1', 'S1'], # Same source
+        'receiver_id': ['R1', 'R2'],
+        'sample_rate': [0.004, 0.004], # Constant
+        'coordinate_scalar': [-100, -100], # Constant
+        'elevation_scalar': [-100, -1000], # Varying (should remain in trace/receiver)
+        'receiver_x': [100.0, 200.0]
+    }
+    df = pd.DataFrame(data)
+    
+    writer = InternalFormatWriter(seis_path, overwrite=True)
+    writer.write_headers(df) # Should extract sample_rate and coordinate_scalar
+    writer.write_traces(np.zeros((2, 10))) # Write dummy traces
+    
+    # Check metadata.json
+    import json
+    with open(writer.layout.global_metadata_path, 'r') as f:
+        meta = json.load(f)
+        
+    assert meta['sample_rate'] == 0.004
+    assert meta['coordinate_scalar'] == -100
+    assert 'elevation_scalar' not in meta # It varies
+    
+    # Check tables
+    sd = SeismicData.open(seis_path)
+    
+    # trace.parquet should NOT have sample_rate or coordinate_scalar
+    # But it MIGHT have elevation_scalar if it wasn't in source/receiver schema (removed from receiver)
+    # verify headers
+    h = sd.headers
+    assert 'elevation_scalar' in h.columns
+    # extracted globals are NOT in columns via join, they are in metadata
+    # Unless sd.headers logic injects them? (No, it doesn't currently)
+    # The user wanted them in metadata.json.
+    # Current SeismicData doesn't inject metadata into .headers view automatically?
+    # TODO: Maybe it should? But for now verifying extraction.
+    
+    sd.close()

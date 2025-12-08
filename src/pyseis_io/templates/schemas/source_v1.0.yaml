@@ -58,3 +58,6 @@ columns:
   signature_id:
     dtype: int32
     description: 'signature id'
+  recording_delay:
+    dtype: float32
+    description: 'recording delay'

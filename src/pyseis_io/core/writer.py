@@ -169,8 +169,27 @@ class InternalFormatWriter:
             metadata: Dictionary containing global metadata.
         """
         # Ensure metadata directory exists (handled by layout.create/ensure_structure)
+    def write_metadata(self, metadata: Dict[str, Any]) -> None:
+        """
+        Write global metadata to JSON file. Merges with existing metadata.
+        
+        Args:
+            metadata: Dictionary containing global metadata.
+        """
+        import json
+        
+        current_meta = {}
+        if self.layout.global_metadata_path.exists():
+            try:
+                with open(self.layout.global_metadata_path, 'r') as f:
+                    current_meta = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+        
+        current_meta.update(metadata)
+        
         with open(self.layout.global_metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+            json.dump(current_meta, f, indent=2)
 
     def append_provenance(self, event: Dict[str, Any]) -> None:
         """
@@ -219,9 +238,15 @@ class InternalFormatWriter:
         from .schema import SchemaManager
         schema_mgr = SchemaManager(self.layout.root_path)
         
+        # Work on a copy to allow modification (dropping globals/columns)
+        df = trace_headers.copy()
+        
+        # 0. Extract Globals
+        self._extract_and_write_globals(df)
+        
         # 1. Normalize and Write Source Table
         self._normalize_and_write_table(
-            df=trace_headers,
+            df=df,
             schema_name='source',
             id_col='source_id',
             schema_mgr=schema_mgr
@@ -229,14 +254,51 @@ class InternalFormatWriter:
         
         # 2. Normalize and Write Receiver Table
         self._normalize_and_write_table(
-            df=trace_headers,
+            df=df,
             schema_name='receiver',
             id_col='receiver_id',
             schema_mgr=schema_mgr
         )
         
         # 3. Write Remaining Trace Headers
-        self._write_trace_headers(trace_headers, schema_mgr)
+        self._write_trace_headers(df, schema_mgr)
+
+    def _extract_and_write_globals(self, df: pd.DataFrame) -> None:
+        """
+        Identify constant columns (from a specific list) and move them to metadata.json.
+        Removes them from the DataFrame to prevent duplication.
+        """
+        global_candidates = ['num_samples', 'sample_rate', 'coordinate_scalar', 'elevation_scalar']
+        metadata_updates = {}
+        
+        for col in global_candidates:
+            if col in df.columns:
+                # Check uniqueness (ignoring NaN)
+                uniques = df[col].dropna().unique()
+                if len(uniques) == 1:
+                    # It's a global
+                    val = uniques[0]
+                    # Convert numpy scalar to Python native for JSON serialization
+                    if hasattr(val, 'item'):
+                        val = val.item()
+                    metadata_updates[col] = val
+                    
+                    # Remove from df so it doesn't go into trace/source/receiver parquet
+                    del df[col]
+                    
+        if metadata_updates:
+            # Load existing metadata to preserve other fields
+            current_meta = {}
+            if self.layout.global_metadata_path.exists():
+                try:
+                    with open(self.layout.global_metadata_path, 'r') as f:
+                        current_meta = json.load(f)
+                except (json.JSONDecodeError, FileNotFoundError):
+                    pass
+            
+            # Update and Write
+            current_meta.update(metadata_updates)
+            self.write_metadata(current_meta)
 
     def _normalize_and_write_table(
         self, 

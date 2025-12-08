@@ -25,27 +25,9 @@ columns:
   datum_z:
     dtype: float32
     description: 'receiver datum z coordinate'
-  num_samples:
-    dtype: int32
-    description: 'number of samples'
-  sample_rate:
-    dtype: float32
-    description: 'sample rate'
-  recording_delay:
-    dtype: float32
-    description: 'recording delay'
   receiver_static:
     dtype: float32
     description: 'receiver static'
-  uphole_time:
-    dtype: float32
-    description: 'uphole time'
   water_depth:
     dtype: float32
     description: 'water depth'
-  coordinate_scalar:
-    dtype: float32
-    description: 'coordinate scalar'
-  elevation_scalar:
-    dtype: float32
-    description: 'elevation scalar'
