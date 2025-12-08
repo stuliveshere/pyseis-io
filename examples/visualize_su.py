@@ -35,15 +35,15 @@ def main():
         print(f"Scanned {len(df)} traces.")
         
         print(f"Converting to internal format at {seis_path}...")
-        converter.convert(seis_path)
+        print(f"Converting to internal format at {seis_path}...")
+        sd = converter.convert(seis_path)
         
         print("Launching viewer...")
         print("Note: Dataset will be deleted when viewer closes.")
         
         try:
-            # Load dataset to access summary
-            from pyseis_io.core.dataset import SeismicData
-            sd = SeismicData.open(seis_path)
+            # sd is already opened
+            # from pyseis_io.core.dataset import SeismicData # No longer needed here
             print(sd.summary())
             sd.close() # Close to release for viewer (though viewer re-opens it)
             

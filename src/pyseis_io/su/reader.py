@@ -340,6 +340,7 @@ class SUConverter:
                 # Pre-allocate array
                 traces = np.zeros((count, self._ns), dtype=np.float32)
                 
+                # Optimize read loop if needed, but this is readable
                 for j in range(count):
                     trace_idx = i + j
                     # Calculate offset
@@ -349,7 +350,6 @@ class SUConverter:
                     data_bytes = f.read(self._ns * 4)
                     
                     # Unpack
-                    # Efficient: np.frombuffer
                     trace_data = np.frombuffer(data_bytes, dtype=np.float32)
                     
                     # Handle byteswap
@@ -362,3 +362,7 @@ class SUConverter:
                 writer.write_data_chunk(traces, start_trace=i)
                 
         print(f"Conversion complete: {output_path}")
+        
+        # Return opened dataset
+        from pyseis_io.core.dataset import SeismicData
+        return SeismicData.open(output_path)
