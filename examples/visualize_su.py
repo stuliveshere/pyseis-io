@@ -35,7 +35,6 @@ def main():
         print(f"Scanned {len(df)} traces.")
         
         print(f"Converting to internal format at {seis_path}...")
-        print(f"Converting to internal format at {seis_path}...")
         sd = converter.convert(seis_path)
         
         print("Launching viewer...")
