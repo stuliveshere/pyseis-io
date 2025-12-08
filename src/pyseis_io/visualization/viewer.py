@@ -66,7 +66,21 @@ class SeismicViewer:
         self.update()
         
         if show:
+            # Connect close event to cleanup resources
+            self.fig.canvas.mpl_connect('close_event', self.on_close)
             plt.show()
+
+    def on_close(self, event):
+        """Handle window close event."""
+        self.close()
+
+    def close(self):
+        """Explicitly close resources."""
+        if hasattr(self, 'sd') and self.sd:
+            print("Closing SeismicData resources...")
+            self.sd.close()
+            self.sd = None
+
 
     def update(self):
         """Update display for current gather index."""
