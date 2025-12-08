@@ -11,25 +11,32 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union
 
 from pyseis_io.core.dataset import SeismicData
-from .reader import SU_TO_SEISDATA
+from pyseis_io.base import SeismicExporter
 
-class SUWriter:
+class SUExporter(SeismicExporter):
     """
     Writer for exporting internal format to SU files.
     """
     
-    def __init__(self, seismic_data_path: Union[str, Path], header_def: Optional[str] = None):
+    def __init__(self, seismic_data: Union[SeismicData, str, Path], header_def: Optional[str] = None):
         """
         Initialize the SU Writer.
         
         Args:
-            seismic_data_path: Path to the input pyseis-io dataset.
+            seismic_data: SeismicData object or path to the input pyseis-io dataset.
             header_def: Optional path to a YAML file defining the SU header structure.
                         Defaults to src/pyseis_io/su/su.yaml.
         """
-        self.seismic_data_path = Path(seismic_data_path)
-        if not self.seismic_data_path.exists():
-            raise FileNotFoundError(f"Seismic dataset not found: {seismic_data_path}")
+        if isinstance(seismic_data, (str, Path)):
+             self.seismic_data_path = Path(seismic_data)
+             if not self.seismic_data_path.exists():
+                 raise FileNotFoundError(f"Seismic dataset not found: {seismic_data}")
+             self._sd_instance = None
+        elif isinstance(seismic_data, SeismicData):
+             self._sd_instance = seismic_data
+             self.seismic_data_path = seismic_data.file_path
+        else:
+             raise ValueError("seismic_data must be a Path/str or SeismicData object")
             
         # Load header definition
         if header_def:
@@ -63,18 +70,21 @@ class SUWriter:
         # Or prioritized.
         self.reverse_mapping = {v: k for k, v in self.mapping.items()}
 
-    def export(self, output_su_path: Union[str, Path], endian: str = '<') -> None:
+    def export(self, output_path: Union[str, Path], endian: str = '<', **kwargs) -> None:
         """
         Export to SU file.
         
         Args:
-            output_su_path: Path to the output SU file.
+            output_path: Path to the output SU file.
             endian: Endianness for output ('<' for little, '>' for big).
         """
-        output_su_path = Path(output_su_path)
+        output_su_path = Path(output_path)
         
-        # Open dataset
-        sd = SeismicData.open(self.seismic_data_path)
+        # Open dataset if not already
+        if self._sd_instance:
+             sd = self._sd_instance
+        else:
+             sd = SeismicData.open(self.seismic_data_path)
         
         # Get headers and data
         # We need to compute() to get everything in memory?

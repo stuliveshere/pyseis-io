@@ -6,30 +6,32 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, Tuple
 
+
 from pyseis_io.core.writer import InternalFormatWriter
+from pyseis_io.base import SeismicImporter
 
 # Mapping SU headers to SeisData schema
 # Key: SU header name (from su.yaml) -> Value: SeisData column name
-class SUConverter:
+class SUImporter(SeismicImporter):
     """
     Reader for Seismic Unix files that converts to pyseis-io internal format.
     Supports 'Scan -> Modify -> Convert' workflow.
     """
     
-    def __init__(self, su_path: Union[str, Path], header_def: Optional[str] = None, mapping_path: Optional[str] = None):
+    def __init__(self, path: Union[str, Path], header_def: Optional[str] = None, mapping_path: Optional[str] = None):
         """
         Initialize the SU Converter.
         
         Args:
-            su_path: Path to the SU file.
+            path: Path to the SU file.
             header_def: Optional path to a YAML file defining the SU header structure.
                         Defaults to src/pyseis_io/su/su.yaml.
             mapping_path: Optional path to a YAML file defining SU->Core mapping.
                           Defaults to src/pyseis_io/su/mapping.yaml.
         """
-        self.su_path = Path(su_path)
+        self.su_path = Path(path)
         if not self.su_path.exists():
-            raise FileNotFoundError(f"SU file not found: {su_path}")
+            raise FileNotFoundError(f"SU file not found: {path}")
             
         # Load header definition
         if header_def:
@@ -60,12 +62,6 @@ class SUConverter:
         with open(self.mapping_path, 'r') as f:
              self.mapping = yaml.safe_load(f)
 
-        # Verify mapping keys exist in header definition (Optional, but good for validation)
-        # for k in self.mapping.keys():
-        #     if k not in self.su_headers:
-        #          # Warning?
-        #          pass
-        
         # Internal state
         self._endian = None
         self._ns = None
@@ -292,7 +288,7 @@ class SUConverter:
         return out
 
 
-    def convert(self, output_path: Union[str, Path], chunk_size: int = 1000):
+    def import_data(self, output_path: Union[str, Path], chunk_size: int = 1000, **kwargs) -> 'SeismicData':
         """
         Convert the SU file to internal format using the (possibly modified) headers.
         
@@ -366,3 +362,4 @@ class SUConverter:
         # Return opened dataset
         from pyseis_io.core.dataset import SeismicData
         return SeismicData.open(output_path)
+
